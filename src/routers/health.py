@@ -1,5 +1,5 @@
 from fastapi import FastAPI,APIRouter
-import os
+from helpers.config import get_settings
 # Create a router for the base routes
 base_router = APIRouter(
     prefix="",  # Prefix for all routes in this router
@@ -11,8 +11,10 @@ async def health_check():
     Health check endpoint for the Customer Support Agent With Escalation application.
     Returns App name and Version as well as a welcome message.
     """
-    app_name = os.getenv("APP_NAME")
-    app_version = os.getenv("APP_VERSION")
+    app_settings = get_settings()
+    app_name = app_settings.APP_NAME.value
+    app_version = app_settings.APP_VERSION.value
+
     return {'APP_NAME': app_name,
             'APP_VERSION': app_version,
             "message": "Welcome to the Customer Support Agent With Escalation !"}
