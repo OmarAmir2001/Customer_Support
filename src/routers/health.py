@@ -12,8 +12,8 @@ async def health_check():
     Returns App name and Version as well as a welcome message.
     """
     app_settings = get_settings()
-    app_name = app_settings.APP_NAME.value
-    app_version = app_settings.APP_VERSION.value
+    app_name = app_settings.APP_NAME
+    app_version = app_settings.APP_VERSION
 
     return {'APP_NAME': app_name,
             'APP_VERSION': app_version,
