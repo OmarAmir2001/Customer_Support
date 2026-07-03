@@ -6,6 +6,9 @@ from controllers import ProjectController
 import os
 import aiofiles
 from models import ResponseSignel
+import logging
+
+logger = logging.getLogger('uvicorn.error')
 
 admin_router = APIRouter(
     prefix="/api/v1/admin",  # Prefix for all routes in this router
@@ -35,13 +38,19 @@ async def ingest_data(project_id: str, file: UploadFile, app_settings: Settings 
     file_path = data_controller.generate_unique_filename(original_filename=file.filename, project_id=project_id)
 
     # Save the uploaded file in chunks to the project directory
-    async with aiofiles.open(file_path, 'wb') as f:
-        while chunk:= await file.read(app_settings.FILE_Default_CHUNK_SIZE):
-            await f.write(chunk)
+    try:
+        async with aiofiles.open(file_path, 'wb') as f:
+            while chunk:= await file.read(app_settings.FILE_Default_CHUNK_SIZE):
+                await f.write(chunk)
 
-    # Return a success response indicating that the file ingestion was successful.
-    return JSONResponse( content={"signal": ResponseSignel.FILE_INGESTION_SUCCESS.value})
-
+        # Return a success response indicating that the file ingestion was successful.
+        return JSONResponse( content={"signal": ResponseSignel.FILE_INGESTION_SUCCESS.value})
+    except Exception as e:
+        logger.error(f"Error occurred while ingesting file: {e}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"signal": ResponseSignel.FILE_INGESTION_FAILED.value, "error": str(e)}
+        )
 
 
 @admin_router.get("/knowledge_base/stats")

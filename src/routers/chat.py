@@ -11,7 +11,7 @@ async def chat_with_agent(user_input: str):
     """
     Endpoint to handle user input and return a response from the Customer Support Agent With Escalation application.
     the core endpoint. Student sends a question, gets back an answer OR an escalation status.
-    his is what Gradio UI (and later, any other frontend) calls.
+    This is what Gradio UI (and later, any other frontend) calls.
     """
     # Placeholder response.
     response = f"Received your input: {user_input}. This is a placeholder response from the Customer Support Agent."
