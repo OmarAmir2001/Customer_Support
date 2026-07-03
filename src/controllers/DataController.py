@@ -18,9 +18,9 @@ class DataController(BaseController):
         
         return True, ResponseSignel.FILE_VALIDATED_SUCCESS.value
     
-    def generate_unique_filename(self ,original_filename:str,project_id:str):
+    def generate_unique_filepath(self ,original_filename:str,project_id:str):
         """
-        Generate a unique filename by appending a timestamp to the original filename.
+        Generate a unique filepath by appending a timestamp to the original filename.
         """
         # Generate a random key to ensure uniqueness
         random_key = self.generate_random_string()
@@ -28,12 +28,14 @@ class DataController(BaseController):
         cleaned_filename = self.get_clean_filename(original_filename)
 
         # Generate a new file path with the random key and cleaned filename
-        new_file_path = os.path.join(project_path, f"{random_key}_{cleaned_filename}")
+        new_file_path = os.path.join(project_path,
+                                      f"{random_key}_{cleaned_filename}")
         # Ensure the filename is unique within the project directory
         while os.path.exists(new_file_path):
             random_key = self.generate_random_string()
             new_file_path = os.path.join(project_path, f"{random_key}_{cleaned_filename}")
-        return new_file_path
+        
+        return new_file_path, f"{random_key}_{cleaned_filename}"
     
 
     def get_clean_filename(self, original_filename: str):

@@ -35,22 +35,23 @@ async def ingest_data(project_id: str, file: UploadFile, app_settings: Settings 
         )
     # Get the project directory path using ProjectController
     project_dir_path=ProjectController().get_project_path(project_id=project_id)
-    file_path = data_controller.generate_unique_filename(original_filename=file.filename, project_id=project_id)
+    file_path, file_id = data_controller.generate_unique_filepath(original_filename=file.filename, project_id=project_id)
 
     # Save the uploaded file in chunks to the project directory
     try:
         async with aiofiles.open(file_path, 'wb') as f:
             while chunk:= await file.read(app_settings.FILE_Default_CHUNK_SIZE):
                 await f.write(chunk)
-
-        # Return a success response indicating that the file ingestion was successful.
-        return JSONResponse( content={"signal": ResponseSignel.FILE_INGESTION_SUCCESS.value})
+    # Handle any exceptions that occur during file ingestion and return a 500 Internal Server Error response with the appropriate signal and error message.
     except Exception as e:
         logger.error(f"Error occurred while ingesting file: {e}")
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"signal": ResponseSignel.FILE_INGESTION_FAILED.value, "error": str(e)}
         )
+    # Return a success response indicating that the file ingestion was successful.
+    return JSONResponse( content={"signal": ResponseSignel.FILE_INGESTION_SUCCESS.value,
+                                   "file_id": file_id})
 
 
 @admin_router.get("/knowledge_base/stats")
