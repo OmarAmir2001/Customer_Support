@@ -1,12 +1,14 @@
 from fastapi import APIRouter,UploadFile, Depends, status
 from fastapi.responses import JSONResponse
 from helpers import get_settings, Settings
-from controllers import DataController
-from controllers import ProjectController
+from controllers import DataController, ProjectController, ProccessController
 import os
 import aiofiles
 from models import ResponseSignel
 import logging
+from .schemas import ProcessRequest
+
+
 
 logger = logging.getLogger('uvicorn.error')
 
@@ -52,6 +54,41 @@ async def ingest_data(project_id: str, file: UploadFile, app_settings: Settings 
     # Return a success response indicating that the file ingestion was successful.
     return JSONResponse( content={"signal": ResponseSignel.FILE_INGESTION_SUCCESS.value,
                                    "file_id": file_id})
+#=========================================================================================================
+#======================== Process Endpoint for Re-running Handbook Ingestion Pipeline ====================
+#=========================================================================================================
+@admin_router.post("/proccess/{project_id}")
+async def process_endpoint(project_id: str, request: ProcessRequest):
+    """
+    Endpoint to process data in the system.
+    re-runs the handbook ingestion pipeline. 
+    Needed for when CS_2023.md or IS_2023.md get updated 
+    and you need to re chunk and re-ingest the data without redeploying.
+    """
+    # Placeholder response.
+    file_id = request.file_id
+    chunk_size = request.chunk_size
+    overlap = request.overlap
+
+    process_controller = ProccessController(project_id=project_id)
+
+    file_content = process_controller.get_file_content(file_id=file_id)
+
+    file_chunks = process_controller.proccess_file_content(
+        file_content=file_content,
+        file_id=file_id, 
+        chunk_size=chunk_size,
+        overlap=overlap
+        )
+    if file_chunks is None or len(file_chunks) == 0:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"signal": ResponseSignel.FILE_PROCESSING_FAILED.value, "error": "No chunks were created from the file content."}
+        )
+
+
+    return file_chunks
+
 
 
 @admin_router.get("/knowledge_base/stats")
@@ -67,3 +104,6 @@ async def get_knowledge_base_stats():
         "collection_health": "healthy"
     }
     return {"knowledge_base_stats": stats}
+
+
+
