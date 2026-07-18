@@ -2,17 +2,38 @@
 
 > An AI agent that answers student questions from the CS and IS department handbooks, escalates uncertain or sensitive cases to a human advisor, and gets smarter over time from resolved escalations.
 
-**Status:** 🟡 In Progress
+**Status:** 🟡 Early scaffolding — file ingestion & chunking pipeline is functional; the agent (RAG, grading, escalation, memory) is not yet implemented. See [Current Implementation Status](#current-implementation-status) below.
 
 ---
 
 ## What is this?
 
-This agent answers questions about the Higher Institute for Computer Science and Information Systems' CS and IS department handbooks. Unlike a static FAQ bot, it uses a **Corrective RAG (CRAG) loop with confidence-based escalation** — when the agent isn't confident enough in its answer, it pauses and routes the question to a human academic advisor instead of guessing.
+This agent will answer questions about the Higher Institute for Computer Science and Information Systems' CS and IS department handbooks. Unlike a static FAQ bot, the plan is for it to use a **Corrective RAG (CRAG) loop with confidence-based escalation** — when the agent isn't confident enough in its answer, it pauses and routes the question to a human academic advisor instead of guessing.
 
-It also remembers each student across sessions (name, department, past questions) and **learns from every escalation it resolves** — once an advisor answers a question the agent couldn't, that Q&A pair is added back into the knowledge base so the same question gets auto-resolved next time.
+It's also meant to remember each student across sessions (name, department, past questions) and **learn from every escalation it resolves** — once an advisor answers a question the agent couldn't, that Q&A pair gets added back into the knowledge base so the same question is auto-resolved next time.
 
-This is the second project in a 4-part AI engineering portfolio, building directly on patterns established in [Mizan](https://github.com/OmarAmir2001/mizan) (CRAG, long-term memory, Trustcall) while adding new skills: confidence-scored escalation, human-in-the-loop interrupts, Qdrant vector search, and a FastAPI service layer.
+This is the second project in a 4-part AI engineering portfolio, building directly on patterns established in [Mizan](https://github.com/OmarAmir2001/mizan) (CRAG, long-term memory, Trustcall) while adding new skills: confidence-scored escalation, human-in-the-loop interrupts, vector search, and a FastAPI service layer.
+
+---
+
+## Current Implementation Status
+
+What's actually built today, vs. what's still on the roadmap:
+
+| Piece | Status |
+|---|---|
+| FastAPI service with routers (`admin`, `chat`, `escalation`, `history`, `profile`, health check) | ✅ Implemented |
+| MongoDB persistence (`motor`) for projects and document chunks | ✅ Implemented |
+| File upload / ingestion endpoint (`POST /api/v1/admin/ingest/{project_id}`) — validates type/size, saves to disk per project | ✅ Implemented |
+| Chunking pipeline (`POST /api/v1/admin/proccess/{project_id}`) — loads `.txt`/`.md`/`.pdf`, splits with LangChain's `RecursiveCharacterTextSplitter`, stores chunks in MongoDB | ✅ Implemented |
+| `/chat`, `/chat/stream`, `/escalation/*`, `/history/*`, `/profile/*`, `/admin/knowledge_base/stats` | 🟡 Placeholder — routes exist and return mock data, no LLM or logic behind them yet |
+| Vector search (Qdrant), embeddings | ⬜ Not implemented — chunks are currently stored in MongoDB, not embedded |
+| CRAG graph (LangGraph), confidence-based routing, HITL escalation | ⬜ Not implemented |
+| Long-term student memory (LangGraph Store + Trustcall) | ⬜ Not implemented |
+| Self-learning loop (advisor answers → re-embedded) | ⬜ Not implemented |
+| Gradio UI | ⬜ Not implemented |
+
+The sections below (Planned Architecture, Tech Stack, etc.) describe the target design this project is being built toward.
 
 ---
 
@@ -62,18 +83,20 @@ grader                 ← LLM scores chunk relevance + overall confidence
 
 ## Tech Stack
 
-| Component | Technology |
-|---|---|
-| Agent Framework | LangGraph |
-| LLM | Groq — llama-3.3-70b-versatile |
-| Embeddings | intfloat/multilingual-e5-large |
-| Vector Store | Qdrant |
-| Memory (short-term) | LangGraph MemorySaver |
-| Memory (long-term) | LangGraph Store + Trustcall |
-| API Layer | FastAPI |
-| UI | Gradio |
-| Package Management | uv |
-| Deployment | HuggingFace Spaces |
+| Component | Technology | Status |
+|---|---|---|
+| API Layer | FastAPI | ✅ in use |
+| Document store | MongoDB (`motor` async driver) | ✅ in use |
+| Document loading & chunking | LangChain (`langchain-community` loaders + `RecursiveCharacterTextSplitter`) | ✅ in use |
+| Package management | uv | ✅ in use |
+| Agent Framework | LangGraph | ⬜ planned |
+| LLM | Groq — llama-3.3-70b-versatile | ⬜ planned (key is configured, not yet called) |
+| Embeddings | intfloat/multilingual-e5-large | ⬜ planned |
+| Vector Store | Qdrant | ⬜ planned |
+| Memory (short-term) | LangGraph MemorySaver | ⬜ planned |
+| Memory (long-term) | LangGraph Store + Trustcall | ⬜ planned |
+| UI | Gradio | ⬜ planned |
+| Deployment | HuggingFace Spaces | ⬜ planned |
 
 ---
 
@@ -84,40 +107,71 @@ The agent's knowledge base is built from the Higher Institute's official departm
 - `CS_2023.md` — Computer Science department handbook
 - `IS_2023.md` — Information Systems department handbook
 
-Each file is split by section headers (`##`) into chunks, embedded, and stored in Qdrant with metadata (`source`, `section`) so retrieved answers can be traced back to the exact handbook section.
+Today, handbook files are uploaded per-project via `POST /api/v1/admin/ingest/{project_id}`, saved under `src/assets/files/{project_id}/`, then chunked via `POST /api/v1/admin/proccess/{project_id}` (recursive character splitting, configurable `chunk_size`/`overlap`) and stored as `chunks` documents in MongoDB with order and source metadata.
+
+Eventually each chunk will be embedded and stored in Qdrant with metadata (`source`, `section`) so retrieved answers can be traced back to the exact handbook section — that step isn't wired up yet.
 
 ---
 
-## Project Structure (Planned)
+## Project Structure
 
 ```
-customer-support-agent/
-├── app.py                   # Gradio UI — entry point
-├── api/
-│   ├── main.py               # FastAPI app
+Customer_Support/
+├── docker/
+│   └── docker-compose.yml    # MongoDB service
+├── src/
+│   ├── main.py                # FastAPI app entry point, registers routers, MongoDB lifespan
+│   ├── .env                   # Environment variables (see Configuration below)
+│   ├── pyproject.toml         # Project metadata + dependencies (uv)
+│   ├── uv.lock
+│   ├── assets/files/          # Uploaded project documents (created at runtime, per project_id)
+│   ├── controllers/           # BaseController, DataController, ProjectController, ProccessController
+│   ├── helpers/
+│   │   └── config.py           # Pydantic Settings loaded from .env
+│   ├── models/
+│   │   ├── BaseDataModel.py
+│   │   ├── ProjectModel.py     # Mongo access for the "projects" collection
+│   │   ├── ChunkModel.py       # Mongo access for the "chunks" collection
+│   │   ├── db_schemas/         # Pydantic schemas: Project, DataChunk
+│   │   └── enums/              # DatabaseEnum, ProcessingEnum, ResponseEnum
 │   └── routers/
-│       └── chat.py           # /chat, /history, /health endpoints
-├── model/
-│   ├── graph.py               # LangGraph graph — nodes, edges, state, compilation
-│   ├── memory.py               # Long-term memory — StudentProfile, Trustcall extractors
-│   └── ingest.py                # Handbook ingestion — chunking, embedding, Qdrant storage
-├── docs/
-│   ├── CS_2023.md
-│   └── IS_2023.md
-├── langgraph.json             # LangGraph deployment config
-├── pyproject.toml             # Project metadata + dependencies (uv)
-├── uv.lock
-└── .env                        # API keys (not committed)
+│       ├── health.py           # GET /
+│       ├── admin.py            # /api/v1/admin — ingest, process, knowledge_base/stats
+│       ├── chat.py             # /api/v1/chat — placeholder
+│       ├── escalation.py       # /api/v1/escalation — placeholder
+│       ├── history.py          # /api/v1/history — placeholder
+│       ├── profile.py          # /api/v1/profile — placeholder
+│       └── schemas/            # Request/response models (ProcessRequest, etc.)
 ```
 
 ---
 
-## How It Works
+## API Endpoints
 
-### 1. Ingestion (`ingest.py`)
-`CS_2023.md` and `IS_2023.md` are split by section headers, embedded with `multilingual-e5-large`, and upserted into a Qdrant collection with `department` and `section` metadata for filtered retrieval.
+| Method | Path | Status |
+|---|---|---|
+| GET | `/` | ✅ health check — returns app name/version |
+| POST | `/api/v1/admin/ingest/{project_id}` | ✅ upload a handbook file (`.txt`/`.md`/`.pdf`) into a project |
+| POST | `/api/v1/admin/proccess/{project_id}` | ✅ chunk an ingested file and store chunks in MongoDB |
+| GET | `/api/v1/admin/knowledge_base/stats` | 🟡 placeholder — returns hardcoded stats |
+| POST | `/api/v1/chat/chat` | 🟡 placeholder — echoes input, no agent behind it |
+| POST | `/api/v1/chat/chat/stream` | 🟡 placeholder — fake streamed response |
+| GET | `/api/v1/escalation/escalations` | 🟡 placeholder — hardcoded list |
+| GET | `/api/v1/escalation/escalation/{escalation_id}` | 🟡 placeholder |
+| POST | `/api/v1/escalation/escalation/{escalation_id}/resolve` | 🟡 placeholder |
+| GET / DELETE | `/api/v1/history/history/{user_id}` | 🟡 placeholder |
+| GET / DELETE | `/api/v1/profile/{user_id}/profile` | 🟡 placeholder |
 
-### 2. CRAG + Escalation Loop (`graph.py`)
+Interactive docs are available at `/docs` (Swagger UI) once the server is running.
+
+---
+
+## How It Will Work (Planned)
+
+### 1. Ingestion
+Handbook files are split by section, embedded with `multilingual-e5-large`, and upserted into a Qdrant collection with `department` and `section` metadata for filtered retrieval. *(Currently: files are chunked and stored in MongoDB, without embedding.)*
+
+### 2. CRAG + Escalation Loop
 
 **retrieve_node** — embeds the query, filters Qdrant results by the student's department if known.
 
@@ -131,7 +185,7 @@ customer-support-agent/
 
 **generate_response** — combines retrieved chunks with student profile and behavioral instructions to produce the final answer.
 
-### 3. Memory (`memory.py`)
+### 3. Memory
 
 **load_memory** — loads the student's profile (name, department, past questions) at the start of each session.
 
@@ -146,47 +200,53 @@ When an advisor resolves an escalated question, that question-answer pair is emb
 ## Running Locally
 
 ```bash
-git clone <repo-url>
-cd customer-support-agent
+git clone https://github.com/OmarAmir2001/Customer_Support.git
+cd Customer_Support
 
-# Install uv if needed
-curl -LsSf https://astral.sh/uv/install.sh | sh
+# Start MongoDB
+cd docker
+docker compose up -d
+cd ..
 
 # Install dependencies
+cd src
 uv sync
 
-# Set up environment variables
-cp .env.example .env
-# Add GROQ_API_KEY, LANGSMITH_API_KEY, QDRANT_URL (if using Qdrant Cloud)
+# Configure environment variables — edit src/.env and set at least:
+#   APP_NAME, APP_VERSION, GROQ_API_KEY, MONGODB_URL, MONGODB_DATABASE,
+#   File_Allowed_Types, File_Max_Size, File_Default_CHUNK_SIZE
 
-# Run the FastAPI backend
-uv run uvicorn api.main:app --reload
-
-# Run the Gradio UI (separate terminal)
-uv run app.py
+# Run the FastAPI backend (from src/)
+uv run uvicorn main:app --reload
 ```
+
+The API is then available at `http://127.0.0.1:8000`, with docs at `http://127.0.0.1:8000/docs`.
 
 ---
 
 ## Skills Demonstrated
 
-- Corrective RAG with confidence-based routing
-- Human-in-the-loop (HITL) interrupts and resume flow
-- Long-term memory with LangGraph Store + Trustcall
-- Self-improving knowledge base (resolved tickets → vector store)
-- Qdrant vector search with metadata filtering
-- FastAPI service layer with routers and Pydantic validation
-- Gradio UI with department-aware context
-- Modern Python tooling — uv
+- [x] FastAPI service layer with routers and Pydantic validation
+- [x] Async MongoDB access (`motor`) with schema models
+- [x] File upload validation and document chunking (LangChain)
+- [x] Modern Python tooling — uv
+- [ ] Corrective RAG with confidence-based routing
+- [ ] Human-in-the-loop (HITL) interrupts and resume flow
+- [ ] Long-term memory with LangGraph Store + Trustcall
+- [ ] Self-improving knowledge base (resolved tickets → vector store)
+- [ ] Qdrant vector search with metadata filtering
+- [ ] Gradio UI with department-aware context
 
 ---
 
 ## Roadmap
 
-- [ ] Phase 1 — Ingest handbooks into Qdrant, build basic retrieve/grade/generate pipeline
+- [x] Phase 1a — FastAPI service scaffolding, MongoDB persistence, router layout
+- [x] Phase 1b — Handbook file ingestion + chunking pipeline (MongoDB-backed)
+- [ ] Phase 1c — Embed chunks and move storage to Qdrant, build basic retrieve/grade/generate pipeline
 - [ ] Phase 2 — Add confidence scoring, escalation router, HITL interrupt
 - [ ] Phase 3 — Add long-term student memory
-- [ ] Phase 4 — Wrap in FastAPI with routers
+- [ ] Phase 4 — Wire `/chat`, `/escalation`, `/history`, `/profile` routes to real agent logic
 - [ ] Phase 5 — Build Gradio UI, deploy, write final documentation
 
 ---
