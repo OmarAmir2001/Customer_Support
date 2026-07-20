@@ -204,9 +204,13 @@ git clone https://github.com/OmarAmir2001/Customer_Support.git
 cd Customer_Support
 
 # Start MongoDB
+'''
 cd docker
+cp .env.example .env
 docker compose up -d
 cd ..
+'''
+- update `.env` with your credentials
 
 # Install dependencies
 cd src
