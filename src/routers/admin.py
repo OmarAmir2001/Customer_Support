@@ -2,7 +2,6 @@ from fastapi import APIRouter,UploadFile, Depends, status,Request
 from fastapi.responses import JSONResponse
 from helpers import get_settings, Settings
 from controllers import DataController, ProjectController, ProccessController
-import os
 import aiofiles
 from models import ResponseSignel
 import logging
@@ -28,7 +27,7 @@ async def ingest_data(request: Request,project_id: str, file: UploadFile, app_se
      Needed for when CS_2023.md or IS_2023.md get updated 
      and you need to refresh Qdrant without redeploying.
     """
-    project_model = ProjectModel(db_client=request.app.state.db)
+    project_model = await ProjectModel.create_instance(db_client=request.app.state.db)
     project = await project_model.get_project_or_create_one(project_id=project_id)
 
                                  
@@ -83,7 +82,7 @@ async def process_endpoint(request: Request,project_id: str, process_request: Pr
     overlap = process_request.overlap
     do_reset = process_request.do_reset
 
-    project_model = ProjectModel(db_client=request.app.state.db)
+    project_model = await ProjectModel.create_instance(db_client=request.app.state.db)
     project = await project_model.get_project_or_create_one(project_id=project_id)
     
     process_controller = ProccessController(project_id=project_id)
@@ -112,7 +111,7 @@ async def process_endpoint(request: Request,project_id: str, process_request: Pr
         for i,chunk in enumerate(file_chunks)
                           ]
     
-    chunk_model = ChunkModel(db_client=request.app.state.db)
+    chunk_model = await ChunkModel.create_instance(db_client=request.app.state.db)
 
     if do_reset == 1:
         _=await chunk_model.delete_chunk_by_project_id(project_id=project.id)
