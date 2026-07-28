@@ -1,81 +1,106 @@
 # 🎧 Handbook Assistant — Higher Institute Customer Support Agent
 
-> An AI agent that answers student questions from the CS and IS department handbooks, escalates uncertain or sensitive cases to a human advisor, and gets smarter over time from resolved escalations.
+> An AI agent that answers student questions from the CS and IS department handbooks, escalates uncertain or sensitive cases to a human advisor, and gets smarter over time from resolved escalations — safely.
 
-**Status:** 🟡 Early scaffolding — file ingestion & chunking pipeline is functional; the agent (RAG, grading, escalation, memory) is not yet implemented. See [Current Implementation Status](#current-implementation-status) below.
+**Status:** 🟡 In Progress
 
 ---
 
 ## What is this?
 
-This agent will answer questions about the Higher Institute for Computer Science and Information Systems' CS and IS department handbooks. Unlike a static FAQ bot, the plan is for it to use a **Corrective RAG (CRAG) loop with confidence-based escalation** — when the agent isn't confident enough in its answer, it pauses and routes the question to a human academic advisor instead of guessing.
+This agent answers questions about the Higher Institute for Computer Science and Information Systems' CS and IS department handbooks. Unlike a static FAQ bot, it uses a **Corrective RAG (CRAG) loop with confidence-based escalation** — when the agent isn't confident enough in its answer, it stops and routes the question to a human academic advisor instead of guessing.
 
-It's also meant to remember each student across sessions (name, department, past questions) and **learn from every escalation it resolves** — once an advisor answers a question the agent couldn't, that Q&A pair gets added back into the knowledge base so the same question is auto-resolved next time.
+It also remembers each student across sessions (name, student ID, department, GPA, preferred language) and **learns from resolved escalations** — once an advisor answers a question the agent couldn't, that Q&A pair can be promoted back into the knowledge base (through a human-gated quality check) so the same question is auto-resolved next time.
 
-This is the second project in a 4-part AI engineering portfolio, building directly on patterns established in [Mizan](https://github.com/OmarAmir2001/mizan) (CRAG, long-term memory, Trustcall) while adding new skills: confidence-scored escalation, human-in-the-loop interrupts, vector search, and a FastAPI service layer.
-
----
-
-## Current Implementation Status
-
-What's actually built today, vs. what's still on the roadmap:
-
-| Piece | Status |
-|---|---|
-| FastAPI service with routers (`admin`, `chat`, `escalation`, `history`, `profile`, health check) | ✅ Implemented |
-| MongoDB persistence (`motor`) for projects and document chunks | ✅ Implemented |
-| File upload / ingestion endpoint (`POST /api/v1/admin/ingest/{project_id}`) — validates type/size, saves to disk per project | ✅ Implemented |
-| Chunking pipeline (`POST /api/v1/admin/proccess/{project_id}`) — loads `.txt`/`.md`/`.pdf`, splits with LangChain's `RecursiveCharacterTextSplitter`, stores chunks in MongoDB | ✅ Implemented |
-| `/chat`, `/chat/stream`, `/escalation/*`, `/history/*`, `/profile/*`, `/admin/knowledge_base/stats` | 🟡 Placeholder — routes exist and return mock data, no LLM or logic behind them yet |
-| Vector search (Qdrant), embeddings | ⬜ Not implemented — chunks are currently stored in MongoDB, not embedded |
-| CRAG graph (LangGraph), confidence-based routing, HITL escalation | ⬜ Not implemented |
-| Long-term student memory (LangGraph Store + Trustcall) | ⬜ Not implemented |
-| Self-learning loop (advisor answers → re-embedded) | ⬜ Not implemented |
-| Gradio UI | ⬜ Not implemented |
-
-The sections below (Planned Architecture, Tech Stack, etc.) describe the target design this project is being built toward.
+This is the second project in a 4-part AI engineering portfolio, building directly on patterns established in [Mizan](https://github.com/OmarAmir2001/mizan) (CRAG, long-term memory, Trustcall) while adding new skills: orthogonal confidence-gated escalation, an async ticket lifecycle, a safe human-gated learning loop, and a clean controller-based service architecture.
 
 ---
 
-## Planned Architecture
+## Core Design Principles
+
+This project is built on a set of deliberate architecture decisions (documented in full in [`docs/DESIGN_NOTES.md`](docs/DESIGN_NOTES.md)). The headlines:
+
+- **Two databases, one source of truth.** MongoDB holds documents and state (student profiles, escalation tickets). pgvector holds embeddings. Mongo (and the handbook files on disk) are the **source of truth**; pgvector is a **rebuildable derived index**. Data flows one direction only: source → pgvector.
+- **Escalation is decided by orthogonal judges, not a self-reported confidence score.** The agent runs separate single-purpose checks (context relevance → faithfulness → answer relevance) and escalates if **any** of them fails. No "rate your confidence 0–1."
+- **Escalation ends the run; resolution is a fresh run.** The graph does not stay paused waiting for a human who may take hours or days. It writes a ticket and ends. When the advisor resolves, a separate short run reconnects to the same conversation via `thread_id`.
+- **The learning loop is human-gated.** Resolving a ticket delivers the answer to the student. Promoting that answer into the knowledge base is a *separate*, human-confirmed act — the machine only pre-fills the decision. The handbook always outranks resolved-ticket answers.
+- **Clean separation.** Graph nodes are thin orchestrators; all real logic (LLM calls, DB queries, ticket state) lives in controllers that both the graph and the API reuse.
+
+---
+
+## Architecture
 
 ```
 Student Question
     │
     ▼
-load_memory            ← reads student profile + question history from LangGraph Store
+load_memory              ← reads the student profile (single patched JSON doc)
     │
     ▼
-retrieve_node          ← embeds query, searches Qdrant (filtered by department: CS/IS)
+retrieve_node            ← embeds query, searches pgvector (filtered by department: CS/IS)
     │
     ▼
-grader                 ← LLM scores chunk relevance + overall confidence
+context_relevance_gate   ← LLM judge: do retrieved chunks actually address the question?
     │
-    ├── low confidence ──► escalate_node ──► [HITL interrupt] ──► academic advisor review
-    │                                                                    │
-    │                                                          resolved answer ──► Qdrant
-    │                                                          (learning loop)
+    ├── fails ──────────► escalate_node ──► writes ticket (status: pending) ──► RUN ENDS
+    │                                        "I've escalated this to an advisor."
     │
-    └── high confidence ──► generate_response ← uses student profile + instructions
-                                  │
-                                  ▼
-                            save_memory   ← Trustcall updates student profile
-                                  │
-                                  ▼
-                                END
+    └── passes
+            │
+            ▼
+     generate_response
+            │
+            ▼
+  faithfulness_+_relevance_gate  ← LLM judge: is the answer grounded AND on-topic?
+            │
+            ├── fails ──────────► escalate_node ──► writes ticket ──► RUN ENDS
+            │
+            └── passes
+                    │
+                    ▼
+              save_memory        ← Trustcall patches the student profile (async, small model)
+                    │
+                    ▼
+                   END
+```
+
+**The escalation resolution path (a separate run, hours/days later):**
+
+```
+Advisor opens dashboard ──► sees pending tickets (from Mongo)
+    │
+    ▼
+picks one (→ under_review), types an answer
+    │
+    ├─► answer delivered to the student (waits in persisted thread state; student sees it on return)
+    │
+    ▼
+machine pre-checks: is this answer general? does it contradict the handbook?
+    │
+    ▼
+advisor confirms the "Add to knowledge base" checkbox
+    │
+    ├── checked  ──► answer embedded into pgvector as `instructor_resolved`
+    │                (unless it contradicts the handbook → held for handbook review)
+    │
+    ▼
+ticket → resolved
 ```
 
 ---
 
-## Key Features (Planned)
+## Key Features
 
-- [ ] **Corrective RAG (CRAG)** with confidence scoring per retrieved chunk
-- [ ] **Department-aware retrieval** — filters Qdrant results to CS or IS handbook based on student profile
-- [ ] **Human-in-the-loop escalation** — graph pauses via `interrupt_before` when confidence is low, waits for advisor review
-- [ ] **Structured escalation summaries** — advisor sees student context, the question, what was found, and why it escalated
-- [ ] **Long-term student memory** — name, student ID, department, GPA, past questions, preferred language (LangGraph Store + Trustcall)
-- [ ] **Self-learning knowledge base** — resolved escalations are embedded and added back to Qdrant
-- [ ] **FastAPI service layer** — `/chat`, `/history/{student_id}`, `/health` endpoints with routers and Pydantic validation
+- [ ] **Corrective RAG (CRAG)** with orthogonal, single-purpose LLM-judge gates (context relevance, faithfulness, answer relevance)
+- [ ] **Department-aware retrieval** — filters pgvector results to CS or IS handbook based on the student profile
+- [ ] **Confidence-based escalation** — escalates if any judge gate fails, rather than guessing
+- [ ] **Async ticket lifecycle** — escalation ends the graph run; resolution is a separate run reconnected by `thread_id`
+- [ ] **Structured escalation summaries** — advisor sees student context, the question, what was retrieved, and which gate tripped and why
+- [ ] **Ticket state machine** — `pending → under_review → resolved / rejected`, plus `reopened` and `duplicate`, with full `status_history`
+- [ ] **Long-term student memory** — single patched profile (name, student ID, department, GPA, preferred language) via LangGraph Store + Trustcall
+- [ ] **Safe self-learning knowledge base** — resolved escalations are promoted to pgvector through a human-gated quality check, never automatically
+- [ ] **Handbook precedence** — the handbook always outranks resolved-ticket answers; contradictions flag the handbook for review
+- [ ] **FastAPI service layer** — `/chat`, `/history/{student_id}`, `/resolve`, `/health` endpoints with routers and Pydantic validation
 - [ ] **Gradio UI** — chat interface with department selector and escalation status indicator
 - [ ] **Streaming responses**
 
@@ -83,20 +108,24 @@ grader                 ← LLM scores chunk relevance + overall confidence
 
 ## Tech Stack
 
-| Component | Technology | Status |
-|---|---|---|
-| API Layer | FastAPI | ✅ in use |
-| Document store | MongoDB (`motor` async driver) | ✅ in use |
-| Document loading & chunking | LangChain (`langchain-community` loaders + `RecursiveCharacterTextSplitter`) | ✅ in use |
-| Package management | uv | ✅ in use |
-| Agent Framework | LangGraph | ⬜ planned |
-| LLM | Groq — llama-3.3-70b-versatile | ⬜ planned (key is configured, not yet called) |
-| Embeddings | intfloat/multilingual-e5-large | ⬜ planned |
-| Vector Store | Qdrant | ⬜ planned |
-| Memory (short-term) | LangGraph MemorySaver | ⬜ planned |
-| Memory (long-term) | LangGraph Store + Trustcall | ⬜ planned |
-| UI | Gradio | ⬜ planned |
-| Deployment | HuggingFace Spaces | ⬜ planned |
+| Component            | Technology                        |
+| -------------------- | --------------------------------- |
+| Agent Framework      | LangGraph                         |
+| LLM (generation)     | Groq — llama-3.3-70b-versatile    |
+| LLM (memory extract) | Smaller/faster model (right-sized)|
+| Embeddings           | intfloat/multilingual-e5-large    |
+| Vector Store         | pgvector (Postgres)               |
+| Document/State Store | MongoDB (Motor, async)            |
+| Checkpointer         | Postgres (LangGraph)              |
+| Memory (short-term)  | LangGraph checkpointer (thread-scoped) |
+| Memory (long-term)   | LangGraph Store + Trustcall       |
+| Validation           | Pydantic v2                       |
+| API Layer            | FastAPI                           |
+| UI                   | Gradio                            |
+| Package Management    | uv                               |
+| Deployment           | HuggingFace Spaces                |
+
+> **Note on databases:** Mongo holds tickets and profiles for now; a later migration to consolidate on Postgres is possible but not planned yet. The `thread_id` link between the checkpointer and the escalation ticket works across databases regardless.
 
 ---
 
@@ -107,151 +136,133 @@ The agent's knowledge base is built from the Higher Institute's official departm
 - `CS_2023.md` — Computer Science department handbook
 - `IS_2023.md` — Information Systems department handbook
 
-Today, handbook files are uploaded per-project via `POST /api/v1/admin/ingest/{project_id}`, saved under `src/assets/files/{project_id}/`, then chunked via `POST /api/v1/admin/proccess/{project_id}` (recursive character splitting, configurable `chunk_size`/`overlap`) and stored as `chunks` documents in MongoDB with order and source metadata.
-
-Eventually each chunk will be embedded and stored in Qdrant with metadata (`source`, `section`) so retrieved answers can be traced back to the exact handbook section — that step isn't wired up yet.
+Each file is split by section headers (`##`) into chunks, embedded with `multilingual-e5-large`, and stored in pgvector with metadata (`source`, `section`) so retrieved answers can be traced back to the exact handbook section. Resolved escalations that pass the human-gated quality check are added as additional chunks tagged `source: instructor_resolved` and linked back to their Mongo ticket via `ticket_id`.
 
 ---
 
 ## Project Structure
 
 ```
-Customer_Support/
-├── docker/
-│   └── docker-compose.yml    # MongoDB service
-├── src/
-│   ├── main.py                # FastAPI app entry point, registers routers, MongoDB lifespan
-│   ├── .env                   # Environment variables (see Configuration below)
-│   ├── pyproject.toml         # Project metadata + dependencies (uv)
-│   ├── uv.lock
-│   ├── assets/files/          # Uploaded project documents (created at runtime, per project_id)
-│   ├── controllers/           # BaseController, DataController, ProjectController, ProccessController
-│   ├── helpers/
-│   │   └── config.py           # Pydantic Settings loaded from .env
-│   ├── models/
-│   │   ├── BaseDataModel.py
-│   │   ├── ProjectModel.py     # Mongo access for the "projects" collection
-│   │   ├── ChunkModel.py       # Mongo access for the "chunks" collection
-│   │   ├── db_schemas/         # Pydantic schemas: Project, DataChunk
-│   │   └── enums/              # DatabaseEnum, ProcessingEnum, ResponseEnum
-│   └── routers/
-│       ├── health.py           # GET /
-│       ├── admin.py            # /api/v1/admin — ingest, process, knowledge_base/stats
-│       ├── chat.py             # /api/v1/chat — placeholder
-│       ├── escalation.py       # /api/v1/escalation — placeholder
-│       ├── history.py          # /api/v1/history — placeholder
-│       ├── profile.py          # /api/v1/profile — placeholder
-│       └── schemas/            # Request/response models (ProcessRequest, etc.)
+app.py                     # Gradio UI — entry point
+api/
+  main.py                  # FastAPI app
+  routers/
+    chat.py                # /chat, /history, /health
+    escalation.py          # /resolve + advisor endpoints
+controllers/               # all real logic lives here
+  retrieval.py             # RetrievalController — pgvector query + department filter
+  grading.py               # GradingController — the CRAG judge gates
+  escalation.py            # EscalationController — ticket lifecycle + vector sync
+  memory.py                # MemoryController — Trustcall extractor (small model, gated)
+model/                     # data shapes ONLY (no logic)
+  state.py                 # graph State schema
+  schemas.py               # Pydantic models: GateResult, Ticket, StudentProfile
+graph/                     # thin nodes + edges + wiring
+  nodes.py                 # thin nodes (read state → call controller → write state)
+  edges.py                 # conditional edges (read verdict → point)
+  builder.py               # graph assembly + checkpointer + compile
+data/                      # database access ONLY
+  vector_store.py          # pgvector access
+  mongo.py                 # Mongo ticket + profile access
+  checkpointer.py          # Postgres checkpointer setup
+ingest/
+  ingest.py                # handbook chunking + embedding
+docs/
+  CS_2023.md
+  IS_2023.md
+  DESIGN_NOTES.md          # full design rationale for all of the above
+pyproject.toml             # project metadata + dependencies (uv)
+uv.lock
+.env                       # API keys (not committed)
 ```
 
----
-
-## API Endpoints
-
-| Method | Path | Status |
-|---|---|---|
-| GET | `/` | ✅ health check — returns app name/version |
-| POST | `/api/v1/admin/ingest/{project_id}` | ✅ upload a handbook file (`.txt`/`.md`/`.pdf`) into a project |
-| POST | `/api/v1/admin/proccess/{project_id}` | ✅ chunk an ingested file and store chunks in MongoDB |
-| GET | `/api/v1/admin/knowledge_base/stats` | 🟡 placeholder — returns hardcoded stats |
-| POST | `/api/v1/chat/chat` | 🟡 placeholder — echoes input, no agent behind it |
-| POST | `/api/v1/chat/chat/stream` | 🟡 placeholder — fake streamed response |
-| GET | `/api/v1/escalation/escalations` | 🟡 placeholder — hardcoded list |
-| GET | `/api/v1/escalation/escalation/{escalation_id}` | 🟡 placeholder |
-| POST | `/api/v1/escalation/escalation/{escalation_id}/resolve` | 🟡 placeholder |
-| GET / DELETE | `/api/v1/history/history/{user_id}` | 🟡 placeholder |
-| GET / DELETE | `/api/v1/profile/{user_id}/profile` | 🟡 placeholder |
-
-Interactive docs are available at `/docs` (Swagger UI) once the server is running.
+**Dependency direction:** `api/` and `graph/` call `controllers/`; `controllers/` call `data/`. Never the reverse.
 
 ---
 
-## How It Will Work (Planned)
+## How It Works
 
-### 1. Ingestion
-Handbook files are split by section, embedded with `multilingual-e5-large`, and upserted into a Qdrant collection with `department` and `section` metadata for filtered retrieval. *(Currently: files are chunked and stored in MongoDB, without embedding.)*
+### 1. Ingestion (`ingest/ingest.py`)
 
-### 2. CRAG + Escalation Loop
+`CS_2023.md` and `IS_2023.md` are split by section headers, embedded with `multilingual-e5-large`, and upserted into pgvector with `source` and `section` metadata for filtered, traceable retrieval. Ingestion is idempotent — re-running after a handbook edit replaces the affected chunks (delete-then-insert keyed on `source` + `section`) rather than duplicating them.
 
-**retrieve_node** — embeds the query, filters Qdrant results by the student's department if known.
+### 2. CRAG + Escalation Loop (`graph/`)
 
-**grader** — scores each chunk's relevance and computes an overall confidence score (not just yes/no).
+**retrieve_node** — embeds the query, filters pgvector results by the student's department if known.
 
-**route_after_grading** — if confidence ≥ threshold, generate an answer. If confidence is low, escalate.
+**context_relevance_gate** — an LLM judge checks whether the retrieved chunks actually address the question. If not, escalate immediately (skip generation).
 
-**escalate_node** — builds a structured summary (student context, question, what was found, why it's escalating) for the academic advisor.
+**generate_response** — combines the retrieved chunks with the student profile to produce an answer.
 
-**HITL interrupt** — the graph pauses before escalating so an advisor can review and either approve the escalation or answer directly.
+**faithfulness_+_relevance_gate** — an LLM judge checks that the answer is grounded in the retrieved chunks AND actually addresses the question. If either fails, escalate.
 
-**generate_response** — combines retrieved chunks with student profile and behavioral instructions to produce the final answer.
+**escalate_node** — writes a structured ticket to Mongo (student context, question, what was retrieved, which gate tripped and why) with `status: pending`, saves the `thread_id`, and **ends the run**.
 
-### 3. Memory
+### 3. Escalation Resolution (`controllers/escalation.py` + `api/routers/escalation.py`)
 
-**load_memory** — loads the student's profile (name, department, past questions) at the start of each session.
+An advisor reviews pending tickets in a dashboard and answers. Resolution is a **separate short run** keyed to the ticket's `thread_id`: it loads the conversation state from the checkpointer, appends the advisor's message, optionally promotes the answer to the knowledge base (human-gated), and marks the ticket `resolved`. The student sees the answer when they next return.
 
-**save_memory** — Trustcall extracts and patches updated student facts after each interaction, without overwriting existing data.
+### 4. Memory (`controllers/memory.py`)
 
-### 4. The Learning Loop
+**load_memory** — loads the student's single-document profile at the start of each session.
 
-When an advisor resolves an escalated question, that question-answer pair is embedded and added to Qdrant with `source: instructor_resolved` metadata — so the same question is auto-resolved by the agent next time it's asked.
+**save_memory** — Trustcall patches the profile with any new, clearly-stated identity facts, using a small model, gated so it doesn't run on every turn, and off the critical path so it never slows the student's answer.
+
+### 5. The Learning Loop (safe by design)
+
+When an advisor resolves a question, delivering it to the student and promoting it to the knowledge base are **two separate acts**. A generalizability check pre-fills an "Add to knowledge base" checkbox; the advisor confirms. Promoted answers are additive only — the handbook always outranks them at retrieval, and any answer that contradicts the handbook is held and flagged for handbook review rather than added as a competing chunk.
 
 ---
 
 ## Running Locally
 
 ```bash
-git clone https://github.com/OmarAmir2001/Customer_Support.git
+git clone <repo-url>
 cd Customer_Support
 
-# Start MongoDB
-'''
-cd docker
-cp .env.example .env
-docker compose up -d
-cd ..
-'''
-- update `.env` with your credentials
+# Install uv if needed
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Install dependencies
-cd src
 uv sync
 
-# Configure environment variables — edit src/.env and set at least:
-#   APP_NAME, APP_VERSION, GROQ_API_KEY, MONGODB_URL, MONGODB_DATABASE,
-#   File_Allowed_Types, File_Max_Size, File_Default_CHUNK_SIZE
+# Set up environment variables
+cp .env.example .env
+# Add GROQ_API_KEY, LANGSMITH_API_KEY, POSTGRES_URL, MONGO_URL
 
-# Run the FastAPI backend (from src/)
-uv run uvicorn main:app --reload
+# Run the FastAPI backend
+uv run uvicorn api.main:app --reload
+
+# Run the Gradio UI (separate terminal)
+uv run app.py
 ```
-
-The API is then available at `http://127.0.0.1:5000`, with docs at `http://127.0.0.1:5000/docs`.
 
 ---
 
 ## Skills Demonstrated
 
-- [x] FastAPI service layer with routers and Pydantic validation
-- [x] Async MongoDB access (`motor`) with schema models
-- [x] File upload validation and document chunking (LangChain)
-- [x] Modern Python tooling — uv
-- [ ] Corrective RAG with confidence-based routing
-- [ ] Human-in-the-loop (HITL) interrupts and resume flow
-- [ ] Long-term memory with LangGraph Store + Trustcall
-- [ ] Self-improving knowledge base (resolved tickets → vector store)
-- [ ] Qdrant vector search with metadata filtering
-- [ ] Gradio UI with department-aware context
+- Corrective RAG with orthogonal, single-purpose judge gates (hand-written, not framework-dependent)
+- Confidence-based escalation and an async human-in-the-loop resolution flow
+- Durable ticket lifecycle reconnected across separate runs via `thread_id`
+- Safe, human-gated self-improving knowledge base (resolved tickets → vector store)
+- Source-of-truth discipline across two databases with idempotent, rebuildable sync
+- Long-term memory with LangGraph Store + Trustcall (single patched profile, right-sized model)
+- pgvector search with metadata filtering and handbook precedence
+- Clean controller-based architecture — thin nodes, reusable logic, testable in isolation
+- FastAPI service layer with routers and Pydantic v2 validation
+- Modern Python tooling — uv
 
 ---
 
 ## Roadmap
 
-- [x] Phase 1a — FastAPI service scaffolding, MongoDB persistence, router layout
-- [x] Phase 1b — Handbook file ingestion + chunking pipeline (MongoDB-backed)
-- [ ] Phase 1c — Embed chunks and move storage to Qdrant, build basic retrieve/grade/generate pipeline
-- [ ] Phase 2 — Add confidence scoring, escalation router, HITL interrupt
-- [ ] Phase 3 — Add long-term student memory
-- [ ] Phase 4 — Wire `/chat`, `/escalation`, `/history`, `/profile` routes to real agent logic
-- [ ] Phase 5 — Build Gradio UI, deploy, write final documentation
+- [ ] Phase 1 — Ingest handbooks into pgvector; build retrieve → generate pipeline
+- [ ] Phase 2 — Add the two judge gates and the escalation router
+- [ ] Phase 3 — Build the ticket lifecycle, advisor resolution flow, and `thread_id` reconnection
+- [ ] Phase 4 — Add long-term student memory (single patched profile, gated extraction)
+- [ ] Phase 5 — Add the human-gated learning loop (promotion checkbox, handbook precedence, contradiction flagging)
+- [ ] Phase 6 — Wrap in FastAPI with routers; build Gradio UI; deploy; write final documentation
+- [ ] Later — offline evaluation (Hit Rate / MRR / threshold tuning); stale-ticket scanner; duplicate detection; chunk expiry / re-review
 
 ---
 
