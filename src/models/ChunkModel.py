@@ -34,10 +34,10 @@ class ChunkModel(BaseDataModel):
         return chunk
     
     async def get_chunk(self,chunk_id: str):
-        resault = await self.collection.find_one({"_id":ObjectId(chunk_id)})
-        if resault is None:
+        result = await self.collection.find_one({"_id":ObjectId(chunk_id)})
+        if result is None:
             return None
-        return DataChunk(**resault)
+        return DataChunk(**result)
     
 
     async def insert_many_chunks(self, chunks: list, batch_size: int=100):
