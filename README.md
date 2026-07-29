@@ -18,7 +18,7 @@ This is the second project in a 4-part AI engineering portfolio, building direct
 
 ## Core Design Principles
 
-This project is built on a set of deliberate architecture decisions (documented in full in [`docs/DESIGN_NOTES.md`](docs/DESIGN_NOTES.md)). The headlines:
+This project is built on a set of deliberate architecture decisions:
 
 - **Two databases, one source of truth.** MongoDB holds documents and state (student profiles, escalation tickets). pgvector holds embeddings. Mongo (and the handbook files on disk) are the **source of truth**; pgvector is a **rebuildable derived index**. Data flows one direction only: source → pgvector.
 - **Escalation is decided by orthogonal judges, not a self-reported confidence score.** The agent runs separate single-purpose checks (context relevance → faithfulness → answer relevance) and escalates if **any** of them fails. No "rate your confidence 0–1."
