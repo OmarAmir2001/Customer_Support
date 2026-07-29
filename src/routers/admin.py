@@ -1,7 +1,7 @@
 from fastapi import APIRouter,UploadFile, Depends, status,Request
 from fastapi.responses import JSONResponse
 from helpers import get_settings, Settings
-from controllers import DataController, ProjectController, ProccessController
+from controllers import DataController, ProjectController, ProcessController
 import aiofiles
 from models import ResponseSignel
 import logging
@@ -37,13 +37,13 @@ async def ingest_data(request: Request,project_id: str, file: UploadFile, app_se
 
     data_controller = DataController()
     # Validate the uploaded file using DataController
-    is_valid,resault_signal = data_controller.validate_file(file)
+    is_valid,result_signal = data_controller.validate_file(file)
 
     # If the file is not valid, return a 400 Bad Request response with the appropriate signal.
     if not is_valid:
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
-            content={"signal": resault_signal}
+            content={"signal": result_signal}
         )
     # Get the project directory path using ProjectController
     project_dir_path=ProjectController().get_project_path(project_id=project_id)
@@ -130,7 +130,7 @@ async def process_endpoint(request: Request,project_id: str, process_request: Pr
         )
 
     
-    process_controller = ProccessController(project_id=project_id)
+    process_controller = ProcessController(project_id=project_id)
 
 
     no_of_records = 0
