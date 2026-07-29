@@ -6,7 +6,7 @@ class ResponseSignel(Enum):
     FILE_TYPE_NOT_ALLOWED = "File type is not allowed."
     FILE_SIZE_EXCEEDS_LIMIT = "File size exceeds the maximum limit."
     FILE_INGESTION_SUCCESS = "File ingested successfully."
-    FILE_INGESTION_FAILURE = "File ingestion failed."
+    FILE_INGESTION_FAILED = "File ingestion failed."
     FILE_PROCESSING_SUCCESS = "File processed successfully."
     FILE_PROCESSING_FAILED= "File processing failed."
     NO_FILES_ERROR = "Not found files."
