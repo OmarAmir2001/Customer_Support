@@ -1,7 +1,7 @@
 from .BaseController import BaseController
 from .ProjectController import ProjectController
 from fastapi import UploadFile
-from models.enums import ResponseSignel
+from models.enums import ResponseSignal
 import re
 import os
 
@@ -11,12 +11,12 @@ class DataController(BaseController):
 
     def validate_file(self, file: UploadFile):
         if file.content_type not in self.app_settings.File_Allowed_Types:
-            return False, ResponseSignel.FILE_TYPE_NOT_ALLOWED.value
+            return False, ResponseSignal.FILE_TYPE_NOT_ALLOWED.value
         
         if file.size > self.app_settings.File_Max_Size:
-            return False,ResponseSignel.FILE_SIZE_EXCEEDS_LIMIT.value
+            return False,ResponseSignal.FILE_SIZE_EXCEEDS_LIMIT.value
         
-        return True, ResponseSignel.FILE_VALIDATED_SUCCESS.value
+        return True, ResponseSignal.FILE_VALIDATED_SUCCESS.value
     
     def generate_unique_filepath(self ,original_filename:str,project_id:str):
         """

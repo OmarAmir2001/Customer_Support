@@ -1,2 +1,2 @@
-from .ResponseEnum import ResponseSignel
+from .ResponseEnum import ResponseSignal
 from .ProcessingEnum import ProcessingEnum

@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse
 from helpers import get_settings, Settings
 from controllers import DataController, ProjectController, ProcessController
 import aiofiles
-from models import ResponseSignel
+from models import ResponseSignal
 import logging
 from .schemas import ProcessRequest
 from models.ProjectModel import ProjectModel
@@ -59,7 +59,7 @@ async def ingest_data(request: Request,project_id: str, file: UploadFile, app_se
         logger.error(f"Error occurred while ingesting file: {e}")
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"signal": ResponseSignel.FILE_INGESTION_FAILED.value, "error": str(e)}
+            content={"signal": ResponseSignal.FILE_INGESTION_FAILED.value, "error": str(e)}
         )
 
     # Store the asset in the database
@@ -73,7 +73,7 @@ async def ingest_data(request: Request,project_id: str, file: UploadFile, app_se
 
 
     # Return a success response indicating that the file ingestion was successful.
-    return JSONResponse( content={"signal": ResponseSignel.FILE_INGESTION_SUCCESS.value,
+    return JSONResponse( content={"signal": ResponseSignal.FILE_INGESTION_SUCCESS.value,
                                    "file_id": str(asset_record.id),
                                    })
 
@@ -106,7 +106,7 @@ async def process_endpoint(request: Request,project_id: str, process_request: Pr
         if asset_record is None:
             return JSONResponse( 
                 status_code=status.HTTP_400_BAD_REQUEST,
-                content={"signal": ResponseSignel.FILE_ID_ERROR.value}
+                content={"signal": ResponseSignal.FILE_ID_ERROR.value}
                 
             )
         project_files_ids={
@@ -125,7 +125,7 @@ async def process_endpoint(request: Request,project_id: str, process_request: Pr
     if len(project_files_ids) == 0:
         return JSONResponse( 
             status_code=status.HTTP_400_BAD_REQUEST,
-            content={"signal": ResponseSignel.NO_FILES_ERROR.value}
+            content={"signal": ResponseSignal.NO_FILES_ERROR.value}
             
         )
 
@@ -157,7 +157,7 @@ async def process_endpoint(request: Request,project_id: str, process_request: Pr
         if file_chunks is None or len(file_chunks) == 0:
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                content={"signal": ResponseSignel.FILE_PROCESSING_FAILED.value, "error": "No chunks were created from the file content."}
+                content={"signal": ResponseSignal.FILE_PROCESSING_FAILED.value, "error": "No chunks were created from the file content."}
             )
 
 
@@ -174,7 +174,7 @@ async def process_endpoint(request: Request,project_id: str, process_request: Pr
         
         no_of_records += await chunk_model.insert_many_chunks(chunks=file_chunks_records)
         no_of_files+=1
-    return JSONResponse(content={"signal": ResponseSignel.FILE_PROCESSING_SUCCESS.value,
+    return JSONResponse(content={"signal": ResponseSignal.FILE_PROCESSING_SUCCESS.value,
                                 "inserted_chunks": no_of_records,
                                 "processed_files": no_of_files
     })
