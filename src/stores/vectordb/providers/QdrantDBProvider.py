@@ -1,6 +1,6 @@
 from ..VectorDBInterface import VectorDBInterface
 from ..VectorDBEnum import DistanceMethodEnums
-from qdrant_client import model,QdrantClient
+from qdrant_client import models,QdrantClient
 from typing import List
 import logging
 
@@ -12,10 +12,10 @@ class QdrantDBProvider(VectorDBInterface):
         self.distance_method = distance_method
 
         if self.distance_method == DistanceMethodEnums.COSINE.value:
-            self.distance_method = model.Distance.COSINE
+            self.distance_method = models.Distance.COSINE
 
         elif self.distance_method == DistanceMethodEnums.DOT.value:
-            self.distance_method = model.Distance.DOT
+            self.distance_method = models.Distance.DOT
 
         self.logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ class QdrantDBProvider(VectorDBInterface):
         if not self.is_collection_exists(collection_name=collection_name):
             _= self.client.create_collection(
                 collection_name=collection_name,
-                vectors_config=model.VectorParams(size=embedding_size,
+                vectors_config=models.VectorParams(size=embedding_size,
                                                 distance=self.distance_method))
             return True
         return False
@@ -66,7 +66,7 @@ class QdrantDBProvider(VectorDBInterface):
         try:
             _= self.client.upload_record(
                 collection_name=collection_name,
-                records=[model.Record(vector=vector,payload={"text":text,"metadata":metadata})])
+                records=[models.Record(vector=vector,payload={"text":text,"metadata":metadata})])
         except Exception as e:
             self.logger.error(f"Error while inserting batch {e}")
             return False
@@ -89,7 +89,7 @@ class QdrantDBProvider(VectorDBInterface):
             batch_metadata= metadata[i:batch_end]
             batch_record_ids= record_ids[i:batch_end]
             batch_records=[
-                model.Record(vector=batch_vectors[x],
+                models.Record(vector=batch_vectors[x],
                             payload={"text":batch_texts[x],"metadata":batch_metadata[x]})
                 for x in range(len(batch_texts))
 

@@ -1,16 +1,17 @@
 from fastapi import APIRouter,UploadFile, Depends, status,Request
 from fastapi.responses import JSONResponse
 from helpers import get_settings, Settings
-from controllers import DataController, ProjectController, ProcessController
+from controllers import DataController, ProjectController, ProcessController , KBController
 import aiofiles
 from models import ResponseSignal
 import logging
 from .schemas import ProcessRequest
+from .schemas import PushRequest
 from models.ProjectModel import ProjectModel
 from models.ChunkModel import ChunkModel
-from models.db_schemas.data_chunk import DataChunk
+from models.db_schemas import Asset,DataChunk
 from models.AssetModel import AssetModel
-from models.db_schemas.asset import Asset
+
 from models.enums.AssetTypeEnum import AssetTypeEnum
 import os
 
@@ -23,14 +24,13 @@ admin_router = APIRouter(
 )
 # Placeholder implementation for admin management.
 @admin_router.post("/ingest/{project_id}")
-async def ingest_data(request: Request,project_id: str, file: UploadFile, app_settings: Settings = Depends(get_settings)):
+async def ingest_data(request: Request,project_id: int, file: UploadFile, app_settings: Settings = Depends(get_settings)):
     """
     Endpoint to ingest data into the system.
-     re-runs the handbook ingestion pipeline. 
-     Needed for when CS_2023.md or IS_2023.md get updated 
-     and you need to refresh Qdrant without redeploying.
+    This endpoint accepts a file upload and associates it with a specific project.
+    The file is then chunked and stored in the database.
     """
-    project_model = await ProjectModel.create_instance(db_client=request.app.state.db)
+    project_model = await ProjectModel.create_instance(db_client=request.app.state.db_client)
     project = await project_model.get_project_or_create_one(project_id=project_id)
 
                                  
@@ -52,7 +52,7 @@ async def ingest_data(request: Request,project_id: str, file: UploadFile, app_se
     # Save the uploaded file in chunks to the project directory
     try:
         async with aiofiles.open(file_path, 'wb') as f:
-            while chunk:= await file.read(app_settings.FILE_Default_CHUNK_SIZE):
+            while chunk:= await file.read(app_settings.FILE_DEFAULT_CHUNK_SIZE):
                 await f.write(chunk)
     # Handle any exceptions that occur during file ingestion and return a 500 Internal Server Error response with the appropriate signal and error message.
     except Exception as e:
@@ -63,8 +63,8 @@ async def ingest_data(request: Request,project_id: str, file: UploadFile, app_se
         )
 
     # Store the asset in the database
-    asset_model = await AssetModel.create_instance(db_client=request.app.state.db)
-    asset_resource = Asset(asset_project_id=project.id,
+    asset_model = await AssetModel.create_instance(db_client=request.app.state.db_client)
+    asset_resource = Asset(asset_project_id=project.project_id,
                   asset_type=AssetTypeEnum.FILE.value,
                   asset_name=file_id,
                   asset_size=os.path.getsize(file_path)
@@ -74,7 +74,7 @@ async def ingest_data(request: Request,project_id: str, file: UploadFile, app_se
 
     # Return a success response indicating that the file ingestion was successful.
     return JSONResponse( content={"signal": ResponseSignal.FILE_INGESTION_SUCCESS.value,
-                                   "file_id": str(asset_record.id),
+                                   "file_id": str(asset_record.asset_id),
                                    })
 
 
@@ -82,8 +82,8 @@ async def ingest_data(request: Request,project_id: str, file: UploadFile, app_se
 #=========================================================================================================
 #======================== Process Endpoint for Re-running Handbook Ingestion Pipeline ====================
 #=========================================================================================================
-@admin_router.post("/proccess/{project_id}")
-async def process_endpoint(request: Request,project_id: str, process_request: ProcessRequest):
+@admin_router.post("/process/{project_id}")
+async def process_endpoint(request: Request,project_id: int, process_request: ProcessRequest):
     """
     Endpoint to process data in the system.
     re-runs the handbook ingestion pipeline. 
@@ -95,14 +95,14 @@ async def process_endpoint(request: Request,project_id: str, process_request: Pr
     overlap = process_request.overlap
     do_reset = process_request.do_reset
 
-    project_model = await ProjectModel.create_instance(db_client=request.app.state.db)
+    project_model = await ProjectModel.create_instance(db_client=request.app.state.db_client)
     project = await project_model.get_project_or_create_one(project_id=project_id)
 
-    asset_model = await AssetModel.create_instance(db_client=request.app.state.db)
+    asset_model = await AssetModel.create_instance(db_client=request.app.state.db_client)
 
     project_files_ids={}
     if process_request.file_id:
-        asset_record = await asset_model.get_asset_by_id(asset_project_id=project.id,asset_name=process_request.file_id)
+        asset_record = await asset_model.get_asset_by_id(asset_project_id=project.project_id,asset_name=process_request.file_id)
         if asset_record is None:
             return JSONResponse( 
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -110,16 +110,16 @@ async def process_endpoint(request: Request,project_id: str, process_request: Pr
                 
             )
         project_files_ids={
-           asset_record.id :asset_record.asset_name
+           asset_record.asset_id :asset_record.asset_name
         }
         
     else: 
         project_files = await asset_model.get_all_project_assets(
-            asset_project_id=project.id,
+            asset_project_id=project.project_id,
             asset_type=AssetTypeEnum.FILE.value
               )
         project_files_ids={
-            record.id :record.asset_name
+            record.asset_id :record.asset_name
               for record in project_files
             }
     if len(project_files_ids) == 0:
@@ -135,10 +135,10 @@ async def process_endpoint(request: Request,project_id: str, process_request: Pr
 
     no_of_records = 0
     no_of_files=0
-    chunk_model = await ChunkModel.create_instance(db_client=request.app.state.db)
+    chunk_model = await ChunkModel.create_instance(db_client=request.app.state.db_client)
 
     if do_reset == 1:
-         _= await chunk_model.delete_chunk_by_project_id(project_id=project.id)
+         _= await chunk_model.delete_chunk_by_project_id(project_id=project.project_id)
 
 
     for asset_id,file_id in project_files_ids.items():
@@ -148,7 +148,7 @@ async def process_endpoint(request: Request,project_id: str, process_request: Pr
             logger.error(f"Error occurred while processing file: {file_id}")
             continue
 
-        file_chunks = process_controller.proccess_file_content(
+        file_chunks = process_controller.process_file_content(
             file_content=file_content,
             file_id=file_id, 
             chunk_size=chunk_size,
@@ -165,7 +165,7 @@ async def process_endpoint(request: Request,project_id: str, process_request: Pr
             DataChunk(chunk_text=chunk.page_content,
                     chunk_metadata=chunk.metadata,
                     chunk_order=i+1,
-                    chunk_project_id=project.id,
+                    chunk_project_id=project.project_id,
                     chunk_asset_id=asset_id
                     )
             for i,chunk in enumerate(file_chunks)
@@ -180,7 +180,7 @@ async def process_endpoint(request: Request,project_id: str, process_request: Pr
     })
     
 
-@admin_router.get("/knowledge_base/stats")
+@admin_router.get("/index_info/stats/{project_id}")
 async def get_knowledge_base_stats():
     """
      returns chunk counts, last ingestion date, collection health.
@@ -196,3 +196,67 @@ async def get_knowledge_base_stats():
 
 
 
+@admin_router.post("/knowledge_base/push/{project_id}")
+async def push_knowledge_base(request: Request,project_id: int,push_request: PushRequest):
+    """
+     pushes the knowledge base to the vector database.
+     Needed for when you want to refresh the vector database.
+    """
+    project_model = await ProjectModel.create_instance(request.app.state.db_client)
+
+    project = await project_model.get_project_or_create_one(project_id=project_id)
+
+    if not project:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"signal": ResponseSignal.PROJECT_NOT_FOUND.value}
+        )
+    nlp_controller = KBController(vectordb_client=request.app.state.vectordb_client,
+                                  generation_client=request.app.state.generation_client,
+                                  embedding_client=request.app.state.embedding_client)
+
+    has_records = True
+    page_no = 1
+    inserted_items_count = 0
+    chunk_model = await ChunkModel.create_instance(request.app.state.db_client)
+    while has_records:
+        page_chunks = await chunk_model.get_all_chunks_by_project_id(project_id=project.project_id, page=page_no)
+
+        if not page_chunks or len(page_chunks) == 0:
+            has_records = False
+            break
+        is_inserted = await nlp_controller.index_into_vector_db(
+                        project=project,
+                        chunks=page_chunks,
+                        do_reset=push_request.do_reset,
+                    )
+        if not is_inserted:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"signal": ResponseSignal.VECTORDB_INSERTION_FAILED.value}
+            )
+        inserted_items_count+=len(page_chunks)
+        page_no+=1
+
+    return JSONResponse(content={
+        "signal": ResponseSignal.VECTORDB_INSERTION_SUCCESS.value,
+        "inserted_item_count": inserted_items_count
+        })
+    
+    
+
+    
+    
+
+
+
+
+
+@admin_router.post("/knowledge_base/search")
+async def search_knowledge_base(query: str):
+    """
+     searches the knowledge base for a specific query.
+     Needed for when you want to search the knowledge base.
+    """
+    # Placeholder response.
+    return {"message": "Search results for the query: " + query}

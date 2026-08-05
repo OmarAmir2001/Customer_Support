@@ -7,7 +7,7 @@ from models.enums import ProcessingEnum
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
-class ProccessController(BaseController):
+class ProcessController(BaseController):
     def __init__(self, project_id: str):
         super().__init__()
 
@@ -44,8 +44,8 @@ class ProccessController(BaseController):
         loader = self.get_file_loader(file_id=file_id)
         return loader.load() if loader else None
 
-    def proccess_file_content(self,file_content:list,
-                               file_id:str, chunk_size:int=100, overlap:int=20):
+    def process_file_content(self,file_content:list,
+                               file_id:str, chunk_size:int=1000, overlap:int=50):
         """
         Process the content of the specified file in the project directory.
         """

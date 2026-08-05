@@ -5,11 +5,17 @@ class Settings(BaseSettings):
     APP_NAME: str
     APP_VERSION: str
     GROQ_API_KEY: str
-    File_Allowed_Types: list[str]
-    File_Max_Size: int
-    FILE_Default_CHUNK_SIZE: int
-    MONGODB_URL: str
-    MONGODB_DATABASE: str
+    FILE_ALLOWED_TYPES: list
+    FILE_MAX_SIZE: int
+    FILE_DEFAULT_CHUNK_SIZE: int
+
+
+    POSTGRES_USERNAME: str
+    POSTGRES_PASSWORD: str
+    POSTGRES_HOST: str
+    POSTGRES_PORT: int
+    POSTGRES_MAIN_DATABASE: str
+
 
     GENERATION_BACKEND: str = None
     EMBEDDING_BACKEND: str = None

@@ -1,4 +1,5 @@
 from .DataController import DataController
 from .BaseController import BaseController
 from .ProjectController import ProjectController
-from .ProcessController import ProccessController
+from .ProcessController import ProcessController
+from .KBController import KBController

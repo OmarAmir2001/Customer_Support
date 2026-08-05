@@ -4,16 +4,17 @@ from fastapi import UploadFile
 from models.enums import ResponseSignal
 import re
 import os
-
+# this class is responsible for handling file ingestion and validation in the Database.
+# It provides methods to validate uploaded files, generate unique file paths, and clean filenames for storage. The class ensures that files meet the specified criteria before they are processed and stored in the system.
 class DataController(BaseController):
     def __init__(self):
         super().__init__()
 
     def validate_file(self, file: UploadFile):
-        if file.content_type not in self.app_settings.File_Allowed_Types:
+        if file.content_type not in self.app_settings.FILE_ALLOWED_TYPES:
             return False, ResponseSignal.FILE_TYPE_NOT_ALLOWED.value
         
-        if file.size > self.app_settings.File_Max_Size:
+        if file.size > self.app_settings.FILE_MAX_SIZE:
             return False,ResponseSignal.FILE_SIZE_EXCEEDS_LIMIT.value
         
         return True, ResponseSignal.FILE_VALIDATED_SUCCESS.value

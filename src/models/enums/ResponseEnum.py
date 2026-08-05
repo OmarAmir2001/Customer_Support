@@ -11,3 +11,6 @@ class ResponseSignal(Enum):
     FILE_PROCESSING_FAILED= "File processing failed."
     NO_FILES_ERROR = "Not found files."
     FILE_ID_ERROR = "No file found with the specified id."
+    PROJECT_NOT_FOUND = "Project not found."
+    VECTORDB_INSERTION_FAILED = "VectorDB insertion failed."
+    VECTORDB_INSERTION_SUCCESS = "VectorDB insertion success."
