@@ -45,8 +45,8 @@ class CohereProvider(LLMInterface):
                   self.logger.error("Generation model is not set")
                   return None
           
-          max_output_tokens = max_output_tokens if max_output_tokens else self.default_output_max_output_tokens
-          temperature = temperature if temperature else self.default_temperature
+          max_output_tokens = max_output_tokens if max_output_tokens else self.default_generation_max_output_tokens
+          temperature = temperature if temperature else self.default_generation_temperature
 
           response = self.client.chat(model=self.generation_model_id,
                                       chat_history=chat_history,
@@ -74,15 +74,16 @@ class CohereProvider(LLMInterface):
         if document_type == DocumentTypeEnum.QUERY.value :
             input_type = CohereEnums.QUERY.value
 
+        texts = [text] if isinstance(text,str) else text
         response = self.client.embed(
                model=self.embedding_model_id,
-               texts = [self.process_text(text)],
+               texts = [self.process_text(t) for t in texts],
                input_type = input_type,
                embedding_types = ['float'])
         if not response or not response.embeddings or not response.embeddings.float:
                 self.logger.error("Error while generating embedding with cohere")
                 return None
-        return response.embeddings.float[0]
+        return response.embeddings.float
         
         
     def construct_prompt(self, prompt:str, role:str):

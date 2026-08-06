@@ -16,7 +16,7 @@ from models.enums.AssetTypeEnum import AssetTypeEnum
 import os
 
 
-logger = logging.getLogger('uvicorn.error')
+logger = logging.getLogger(__name__)
 
 admin_router = APIRouter(
     prefix="/api/v1/admin",  # Prefix for all routes in this router
@@ -180,21 +180,29 @@ async def process_endpoint(request: Request,project_id: int, process_request: Pr
     })
     
 
+#=========================================================================================================
+#======================== Index Endpoint for getting knowledge base stats ================================
+#=========================================================================================================
+
 @admin_router.get("/index_info/stats/{project_id}")
-async def get_knowledge_base_stats():
+async def get_project_index_stats(request: Request,project_id: int):
     """
-     returns chunk counts, last ingestion date, collection health.
-     Useful for debugging and for showing off in a demo ("look, it has 340 chunks indexed").
+    get project index stats
     """
-    # Placeholder response.
-    stats = {
-        "num_chunks": 340,
-        "last_ingestion": "2024-01-01T12:00:00Z",
-        "collection_health": "healthy"
-    }
-    return {"knowledge_base_stats": stats}
+    project_model = await ProjectModel.create_instance(request.app.state.db_client)
+    project = await project_model.get_project_or_create_one(project_id=project_id)
+    nlp_controller = KBController(vectordb_client=request.app.state.vectordb_client,
+                                      generation_client=request.app.state.generation_client,
+                                      embedding_client=request.app.state.embedding_client)
+    collection_info = nlp_controller.get_vector_db_collection_info(project=project)
+    return JSONResponse(content={
+            "signal": ResponseSignal.VECTORDB_SEARCH_SUCCESS.value,
+            "collection_info": collection_info
+            })
 
-
+#=========================================================================================================
+#======================== Index Endpoint for pushing knowledge base to vector database ====================
+#=========================================================================================================
 
 @admin_router.post("/knowledge_base/push/{project_id}")
 async def push_knowledge_base(request: Request,project_id: int,push_request: PushRequest):
@@ -218,6 +226,7 @@ async def push_knowledge_base(request: Request,project_id: int,push_request: Pus
     has_records = True
     page_no = 1
     inserted_items_count = 0
+    idx = 0
     chunk_model = await ChunkModel.create_instance(request.app.state.db_client)
     while has_records:
         page_chunks = await chunk_model.get_all_chunks_by_project_id(project_id=project.project_id, page=page_no)
@@ -225,10 +234,13 @@ async def push_knowledge_base(request: Request,project_id: int,push_request: Pus
         if not page_chunks or len(page_chunks) == 0:
             has_records = False
             break
-        is_inserted = await nlp_controller.index_into_vector_db(
+        chunks_ids = list(range(idx,idx+len(page_chunks)))
+        idx+=len(page_chunks)
+        is_inserted = nlp_controller.index_into_vector_db(
                         project=project,
                         chunks=page_chunks,
                         do_reset=push_request.do_reset,
+                        chunks_ids=chunks_ids
                     )
         if not is_inserted:
             return JSONResponse(
@@ -243,14 +255,9 @@ async def push_knowledge_base(request: Request,project_id: int,push_request: Pus
         "inserted_item_count": inserted_items_count
         })
     
-    
-
-    
-    
-
-
-
-
+#=========================================================================================================
+#======================== Index Endpoint for search knowledge base =======================================
+#=========================================================================================================
 
 @admin_router.post("/knowledge_base/search")
 async def search_knowledge_base(query: str):

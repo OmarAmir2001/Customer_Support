@@ -3,6 +3,7 @@ from ..VectorDBEnum import DistanceMethodEnums
 from qdrant_client import models,QdrantClient
 from typing import List
 import logging
+import uuid
 
 
 class QdrantDBProvider(VectorDBInterface):
@@ -63,10 +64,12 @@ class QdrantDBProvider(VectorDBInterface):
         if not self.is_collection_exists(collection_name=collection_name):
             self.logger.error(f"Collection {collection_name} does not exist")
             return False
+        if record_ids is None:
+                record_ids = [uuid.uuid4().hex for _ in text]
         try:
             _= self.client.upload_record(
                 collection_name=collection_name,
-                records=[models.Record(vector=vector,payload={"text":text,"metadata":metadata})])
+                records=[models.Record(id=[record_id],vector=vector,payload={"text":text,"metadata":metadata})])
         except Exception as e:
             self.logger.error(f"Error while inserting batch {e}")
             return False
@@ -76,7 +79,7 @@ class QdrantDBProvider(VectorDBInterface):
         if metadata is None:
             metadata = [None]*len(texts)
         if record_ids is None:
-            record_ids = [None]*len(texts)
+            record_ids = list(range(0,len(texts)))
 
         if not self.is_collection_exists(collection_name=collection_name):
             self.logger.error(f"Collection {collection_name} does not exist")
@@ -88,21 +91,22 @@ class QdrantDBProvider(VectorDBInterface):
             batch_vectors= vectors[i:batch_end]
             batch_metadata= metadata[i:batch_end]
             batch_record_ids= record_ids[i:batch_end]
-            batch_records=[
-                models.Record(vector=batch_vectors[x],
-                            payload={"text":batch_texts[x],"metadata":batch_metadata[x]})
+            batch_points = [
+                models.PointStruct(id=batch_record_ids[x],
+                                   vector=batch_vectors[x],
+                                   payload={"text": batch_texts[x], "metadata": batch_metadata[x]})
                 for x in range(len(batch_texts))
-
             ]
             try:
-                
-                _= self.client.upload_records(
+                _ = self.client.upsert(
                     collection_name=collection_name,
-                    records=batch_records)
+                    points=batch_points,
+                    wait=True)
             except Exception as e:
                 self.logger.error(f"Error while inserting batch {e}")
-            
                 return False
+
+        return True
 
     def search_by_vector(self, collection_name:str, vector: list,limit:int = 5):
 
