@@ -25,7 +25,7 @@ class KBController(BaseController):
     def get_vector_db_collection_info(self,project:Project):
         collection_name = self.create_collection_name(project_id=project.project_id)
         collection_info = self.vectordb_client.get_collection_info(collection_name=collection_name)
-        
+
         return json.loads(json.dumps(collection_info, default=lambda o: o.__dict__))
 
     def index_into_vector_db(self,project:Project,chunks:List[DataChunk],chunks_ids:List[int],do_reset:bool=False):
@@ -56,3 +56,23 @@ class KBController(BaseController):
                                              metadata=metadatas,
                                              record_ids=chunks_ids)
         return True
+
+    # def search_vector_db_collection(self,project:Project,query:str,limit:int=10):
+
+    #     collection_name = self.create_collection_name(project_id=project.project_id)
+
+    #     vector = self.embedding_client.embed_text(text=query,
+    #                                               document_type=DocumentTypeEnum.QUERY.value)[0]
+
+    #     if not vector or len(vector) == 0:
+    #         self.logger.error("Error while embedding query")
+    #         return False
+
+    #     results = self.vectordb_client.search_by_vector(collection_name=collection_name,
+    #                                                     vector=vector,
+    #                                                     limit=limit)
+    #     if not results or len(results) == 0:
+    #         return False
+
+        
+    #     return json.loads(json.dumps(results, default=lambda o: o.__dict__))

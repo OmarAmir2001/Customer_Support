@@ -3,3 +3,4 @@ from .BaseController import BaseController
 from .ProjectController import ProjectController
 from .ProcessController import ProcessController
 from .KBController import KBController
+from .RetrievalController import RetrievalController

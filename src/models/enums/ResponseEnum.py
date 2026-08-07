@@ -15,3 +15,4 @@ class ResponseSignal(Enum):
     VECTORDB_INSERTION_FAILED = "VectorDB insertion failed."
     VECTORDB_INSERTION_SUCCESS = "VectorDB insertion success."
     VECTORDB_SEARCH_SUCCESS = "VectorDB search success."
+    VECTORDB_SEARCH_FAILED = "VectorDB search failed."

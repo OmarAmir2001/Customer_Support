@@ -1,11 +1,11 @@
 from fastapi import APIRouter,UploadFile, Depends, status,Request
 from fastapi.responses import JSONResponse
 from helpers import get_settings, Settings
-from controllers import DataController, ProjectController, ProcessController , KBController
+from controllers import DataController, ProjectController, ProcessController , KBController,RetrievalController
 import aiofiles
 from models import ResponseSignal
 import logging
-from .schemas import ProcessRequest
+from .schemas import ProcessRequest,SearchRequest
 from .schemas import PushRequest
 from models.ProjectModel import ProjectModel
 from models.ChunkModel import ChunkModel
@@ -13,6 +13,7 @@ from models.db_schemas import Asset,DataChunk
 from models.AssetModel import AssetModel
 
 from models.enums.AssetTypeEnum import AssetTypeEnum
+from models.enums.ProcessingEnum import ProcessingEnum
 import os
 
 
@@ -142,18 +143,20 @@ async def process_endpoint(request: Request,project_id: int, process_request: Pr
 
 
     for asset_id,file_id in project_files_ids.items():
-        file_content = process_controller.get_file_content(file_id=file_id)
+        if process_controller.get_file_extension(file_id=file_id) == ProcessingEnum.JSON.value:
+            file_chunks = process_controller.process_json_content(file_id=file_id)
+        else:
+            file_content = process_controller.get_file_content(file_id=file_id)
+            if file_content is None:
+                logger.error(f"Error occurred while processing file: {file_id}")
+                continue
 
-        if file_content is None:
-            logger.error(f"Error occurred while processing file: {file_id}")
-            continue
-
-        file_chunks = process_controller.process_file_content(
-            file_content=file_content,
-            file_id=file_id, 
-            chunk_size=chunk_size,
-            overlap=overlap
-            )
+            file_chunks = process_controller.process_file_content(
+                file_content=file_content,
+                file_id=file_id, 
+                chunk_size=chunk_size,
+                overlap=overlap
+                )
         if file_chunks is None or len(file_chunks) == 0:
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -184,8 +187,8 @@ async def process_endpoint(request: Request,project_id: int, process_request: Pr
 #======================== Index Endpoint for getting knowledge base stats ================================
 #=========================================================================================================
 
-@admin_router.get("/index_info/stats/{project_id}")
-async def get_project_index_stats(request: Request,project_id: int):
+@admin_router.get("/index_info/info/{project_id}")
+async def get_project_index_info(request: Request,project_id: int):
     """
     get project index stats
     """
@@ -259,11 +262,28 @@ async def push_knowledge_base(request: Request,project_id: int,push_request: Pus
 #======================== Index Endpoint for search knowledge base =======================================
 #=========================================================================================================
 
-@admin_router.post("/knowledge_base/search")
-async def search_knowledge_base(query: str):
+@admin_router.post("/knowledge_base/search/{project_id}")
+async def search_knowledge_base(request: Request,project_id: int, search_request: SearchRequest):
     """
      searches the knowledge base for a specific query.
      Needed for when you want to search the knowledge base.
     """
-    # Placeholder response.
-    return {"message": "Search results for the query: " + query}
+    project_model = await ProjectModel.create_instance(request.app.state.db_client)
+    project = await project_model.get_project_or_create_one(project_id=project_id)
+    nlp_controller = RetrievalController(vectordb_client=request.app.state.vectordb_client,
+                                        generation_client=request.app.state.generation_client,
+                                        embedding_client=request.app.state.embedding_client)
+
+    results = nlp_controller.search_vector_db_collection(project=project,
+                                                         query=search_request.query,
+                                                         limit=search_request.limit)
+    if not results:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"signal": ResponseSignal.VECTORDB_SEARCH_FAILED.value}
+        )
+    
+    return JSONResponse(content={
+            "signal": ResponseSignal.VECTORDB_SEARCH_SUCCESS.value,
+            "results": results
+            })

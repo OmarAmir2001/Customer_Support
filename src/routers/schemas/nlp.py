@@ -3,3 +3,9 @@ from typing import Optional
 
 class PushRequest(BaseModel):
     do_reset: Optional[int] = 0
+
+
+
+class SearchRequest(BaseModel):
+    query: str
+    limit: Optional[int] = 10

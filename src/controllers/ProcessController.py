@@ -5,6 +5,8 @@ from langchain_community.document_loaders import TextLoader
 from langchain_community.document_loaders import PyMuPDFLoader
 from models.enums import ProcessingEnum
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+import json
+from langchain_core.documents import Document
 
 
 class ProcessController(BaseController):
@@ -64,6 +66,33 @@ class ProcessController(BaseController):
         chunks = text_splitter.create_documents(file_content_text, metadatas=file_content_metadata)
 
         return chunks
+
+
+    def process_json_content(self,file_id:str):
+        """
+        Load a pre-chunked JSON handbook (list of {text, source, section}).
+        Skips extraction + splitting — the chunks are already made.
+        Returns LangChain Documents so the rest of the pipeline is unchanged.
+        """
+        file_path = os.path.join(self.project_path, file_id)
+        if not os.path.exists(file_path):
+            return None
+        with open(file_path, 'r', encoding='utf-8') as f:
+            raw_chunks = json.load(f)
+
+        documents = []
+        for i,chunk in enumerate(raw_chunks):
+            if "text" not in chunk:
+                self.logger.error(f"Error while processing JSON chunk {i}: missing text field")
+                return None
+            documents.append(Document(page_content=chunk["text"],
+                                      metadata={
+                                          "source":chunk.get("source"),
+                                          "section":chunk.get("section")
+                                      }))
+        return documents
+            
+
 
         
         
