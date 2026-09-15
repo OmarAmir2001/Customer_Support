@@ -1,33 +1,29 @@
-services:
-  mongodb:
-    image: mongo:noble
-    container_name: mongodb
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongodata:/data/db
-    environment:
-      - MONGO_INITDB_ROOT_USERNAME=${MONGO_INITDB_ROOT_USERNAME}
-      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_INITDB_ROOT_PASSWORD}
-    networks:
-      - backend
-    restart: always
 
+name: customer_support
+services:
   pgvector:
     image: pgvector/pgvector:0.8.6-pg18
+    container_name: customer_support_pg
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql
     environment:
+      - POSTGRES_USER=${POSTGRES_USERNAME}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_MAIN_DATABASE}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     networks:
       - backend
-    restart: always
+    restart: unless-stopped
 
 networks:
   backend: {}
 
 volumes:
-  mongodata:
   pgdata:
