@@ -137,5 +137,5 @@ __marimo__/
 tempCodeRunnerFile.py
 .DS_Store
 lab
-assets/files/
+/assets/
 alembic.ini
