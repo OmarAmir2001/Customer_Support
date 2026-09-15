@@ -1,16 +1,16 @@
 from fastapi import FastAPI
-from routers.health import base_router
-from routers.history import history_router
-from routers.profile import profile_router
-from routers.admin import admin_router
-from routers.chat import chat_router
-from routers.escalation import escalation_router
+from customer_support.routers.health import base_router
+from customer_support.routers.history import history_router
+from customer_support.routers.profile import profile_router
+from customer_support.routers.admin import admin_router
+from customer_support.routers.chat import chat_router
+from customer_support.routers.escalation import escalation_router
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
-from helpers.config import get_settings
+from customer_support.helpers.config import get_settings
 from contextlib import asynccontextmanager
-from stores.llm.LLMProviderFactory import LLMProviderFactory
-from stores.vectordb.VectorDBProviderFactory import VectorDBProviderFactory
+from customer_support.stores.llm.LLMProviderFactory import LLMProviderFactory
+from customer_support.stores.vectordb.VectorDBProviderFactory import VectorDBProviderFactory
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from helpers.config import get_settings, Settings
+from customer_support.helpers.config import get_settings, Settings
 # Create a router for the base routes
 base_router = APIRouter(
     prefix="",  # Prefix for all routes in this router

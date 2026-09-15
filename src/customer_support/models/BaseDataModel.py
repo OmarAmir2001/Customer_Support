@@ -1,4 +1,4 @@
-from helpers.config import get_settings
+from customer_support.helpers.config import get_settings
 
 class BaseDataModel:
     def __init__(self, db_client: object):

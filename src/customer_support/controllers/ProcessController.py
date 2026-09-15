@@ -3,7 +3,7 @@ from .ProjectController import ProjectController
 import os
 from langchain_community.document_loaders import TextLoader
 from langchain_community.document_loaders import PyMuPDFLoader
-from models.enums import ProcessingEnum
+from customer_support.models.enums import ProcessingEnum
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import json
 from langchain_core.documents import Document

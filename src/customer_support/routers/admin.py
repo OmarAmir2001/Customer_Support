@@ -1,19 +1,19 @@
 from fastapi import APIRouter,UploadFile, Depends, status,Request
 from fastapi.responses import JSONResponse
-from helpers import get_settings, Settings
-from controllers import DataController, ProjectController, ProcessController , KBController,RetrievalController
+from customer_support.helpers import get_settings, Settings
+from customer_support.controllers import DataController, ProjectController, ProcessController , KBController,RetrievalController
 import aiofiles
-from models import ResponseSignal
+from customer_support.models import ResponseSignal
 import logging
 from .schemas import ProcessRequest,SearchRequest
 from .schemas import PushRequest
-from models.ProjectModel import ProjectModel
-from models.ChunkModel import ChunkModel
-from models.db_schemas import Asset,DataChunk
-from models.AssetModel import AssetModel
+from customer_support.models.ProjectModel import ProjectModel
+from customer_support.models.ChunkModel import ChunkModel
+from customer_support.models.db_schemas import Asset,DataChunk
+from customer_support.models.AssetModel import AssetModel
 
-from models.enums.AssetTypeEnum import AssetTypeEnum
-from models.enums.ProcessingEnum import ProcessingEnum
+from customer_support.models.enums.AssetTypeEnum import AssetTypeEnum
+from customer_support.models.enums.ProcessingEnum import ProcessingEnum
 import os
 
 

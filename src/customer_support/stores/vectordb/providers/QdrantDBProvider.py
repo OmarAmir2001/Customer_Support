@@ -4,7 +4,7 @@ from qdrant_client import models,QdrantClient
 from typing import List
 import logging
 import uuid
-from models.db_schemas import RetrievedDocument
+from customer_support.models.db_schemas import RetrievedDocument
 
 
 class QdrantDBProvider(VectorDBInterface):

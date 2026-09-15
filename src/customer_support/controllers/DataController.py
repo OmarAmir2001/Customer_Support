@@ -1,7 +1,7 @@
 from .BaseController import BaseController
 from .ProjectController import ProjectController
 from fastapi import UploadFile
-from models.enums import ResponseSignal
+from customer_support.models.enums import ResponseSignal
 import re
 import os
 # this class is responsible for handling file ingestion and validation in the Database.

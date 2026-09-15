@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import List
-from models.db_schemas import RetrievedDocument
+from customer_support.models.db_schemas import RetrievedDocument
 
 class VectorDBInterface(ABC):
 

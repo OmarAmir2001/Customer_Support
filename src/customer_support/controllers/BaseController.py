@@ -1,23 +1,23 @@
-from helpers.config import get_settings, Settings
 import os
 import random
 import string
+from pathlib import Path
+
+from customer_support.helpers.config import Settings, get_settings
+
 
 class BaseController:
-    def __init__(self, config: Settings = get_settings()):
+    def __init__(self, settings: Settings | None = None):
+        self.app_settings = settings or get_settings()
 
-        self.app_settings = config
-        self.base_dir= os.path.dirname(os.path.dirname(__file__))
+        self.base_dir = Path(self.app_settings.ASSETS_DIR)
+        self.files_dir = self.base_dir / "files"
+        self.data_dir = self.base_dir / "database"
 
-        self.files_dir =os.path.join(self.base_dir, "assets", "files")
-        #self.file_dir =os.base_dir + "/" + "assets/files" another way to get the file path but the above way is more robust and platform-independent
-
-        self.data_dir = os.path.join(self.base_dir, "assets", "database")
     def generate_random_string(self, length: int = 12) -> str:
-        return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
+        return "".join(random.choices(string.ascii_letters + string.digits, k=length))
 
     def get_database_path(self, db_name: str) -> str:
-        database_path = os.path.join(self.data_dir, db_name)
-        if not os.path.exists(database_path):
-            os.makedirs(database_path)
-        return database_path
+        database_path = self.data_dir / db_name
+        database_path.mkdir(parents=True, exist_ok=True)
+        return str(database_path)
