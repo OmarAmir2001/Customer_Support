@@ -3,6 +3,7 @@ from ..LLMEnum import LLMEnums
 from ..LLMEnum import CohereEnums,DocumentTypeEnum
 import cohere
 import logging
+from typing import List,Union
 
 
 class CohereProvider(LLMInterface):
@@ -59,10 +60,12 @@ class CohereProvider(LLMInterface):
           return response.text
 
     
-    def embed_text(self, text:str, document_type:str=None):
+    def embed_text(self, text:Union[str,List[str]], document_type:str=None):
         if not self.client:
                 self.logger.error("cohere client is not initialized")
                 return None
+        if isinstance(text,str):
+               text = [text]
         if not self.embedding_model_id:
                 self.logger.error("Embedding model for cohere is not set")
                 return None

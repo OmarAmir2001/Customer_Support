@@ -18,17 +18,17 @@ class KBController(BaseController):
     def create_collection_name(self,project_id:str):
         return f"collection_{project_id}".strip()
 
-    def reset_vectordb_collection(self,project:Project):
+    async def reset_vectordb_collection(self,project:Project):
         collection_name = self.create_collection_name(project_id=project.project_id)
-        return self.vectordb_client.delete_collection(collection_name=collection_name)
+        return await self.vectordb_client.delete_collection(collection_name=collection_name)
 
-    def get_vector_db_collection_info(self,project:Project):
+    async def get_vector_db_collection_info(self,project:Project):
         collection_name = self.create_collection_name(project_id=project.project_id)
         collection_info = self.vectordb_client.get_collection_info(collection_name=collection_name)
 
-        return json.loads(json.dumps(collection_info, default=lambda o: o.__dict__))
+        return await json.loads(json.dumps(collection_info, default=lambda o: o.__dict__))
 
-    def index_into_vector_db(self,project:Project,chunks:List[DataChunk],chunks_ids:List[int],do_reset:bool=False):
+    async def index_into_vector_db(self,project:Project,chunks:List[DataChunk],chunks_ids:List[int],do_reset:bool=False):
 
         # step 1: get collection name
         collection_name = self.create_collection_name(project_id=project.project_id)
@@ -45,12 +45,12 @@ class KBController(BaseController):
             return False
 
         # step 3: create the collection if it doesn't exist
-        _ = self.vectordb_client.create_collection(collection_name=collection_name,
+        _ = await self.vectordb_client.create_collection(collection_name=collection_name,
                                                    embedding_size=self.embedding_client.embedding_size,
                                                    do_reset=do_reset)
 
         # step 4: insert the data into the collection
-        _ = self.vectordb_client.insert_many(collection_name=collection_name,
+        _ = await self.vectordb_client.insert_many(collection_name=collection_name,
                                              texts=texts,
                                              vectors=vectors,
                                              metadata=metadatas,

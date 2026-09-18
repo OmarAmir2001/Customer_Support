@@ -34,6 +34,8 @@ dependencies = [
     "langchain-community>=0.4.2",
     "langchain-text-splitters>=1.0.0",
     "pymupdf>=1.28.0",
+    "pgvector>=0.5.0",
+    "nltk>=3.10.3",
 ]
 
 [project.optional-dependencies]
