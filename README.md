@@ -1,268 +1,311 @@
 # 🎧 Handbook Assistant — Higher Institute Customer Support Agent
 
-> An AI agent that answers student questions from the CS and IS department handbooks, escalates uncertain or sensitive cases to a human advisor, and gets smarter over time from resolved escalations — safely.
+> An AI agent that answers student questions from the CS and IS department handbooks, escalates the ones it cannot answer confidently to a human advisor, and learns from resolved escalations — through a human-gated promotion step, not automatically.
 
-**Status:** 🟡 In Progress
+**Status:** 🟢 Core loop working end to end. Long-term student memory and the promotion judges are not built yet — see [Roadmap](#roadmap).
 
 ---
 
 ## What is this?
 
-This agent answers questions about the Higher Institute for Computer Science and Information Systems' CS and IS department handbooks. Unlike a static FAQ bot, it uses a **Corrective RAG (CRAG) loop with confidence-based escalation** — when the agent isn't confident enough in its answer, it stops and routes the question to a human academic advisor instead of guessing.
+A support agent for the Higher Institute for Computer Science and Information Systems' CS and IS handbooks. Unlike a static FAQ bot, it runs a **Corrective RAG loop with confidence-gated escalation**: when the agent cannot answer from the handbook with confidence, it stops, writes a ticket, and routes the question to a human academic advisor instead of guessing.
 
-It also remembers each student across sessions (name, student ID, department, GPA, preferred language) and **learns from resolved escalations** — once an advisor answers a question the agent couldn't, that Q&A pair can be promoted back into the knowledge base (through a human-gated quality check) so the same question is auto-resolved next time.
+The escalation is a **lifecycle, not an event**. The graph run ends the moment it escalates — nothing stays parked in memory waiting for a human who may take days. When an advisor resolves the ticket, a second write reconnects to the same conversation through its `thread_id`, and the student reads the answer whenever they next return.
 
-This is the second project in a 4-part AI engineering portfolio, building directly on patterns established in [Mizan](https://github.com/OmarAmir2001/mizan) (CRAG, long-term memory, Trustcall) while adding new skills: orthogonal confidence-gated escalation, an async ticket lifecycle, a safe human-gated learning loop, and a clean controller-based service architecture.
+Resolved answers can then be promoted back into the knowledge base as `instructor_resolved` chunks, so the same question is answered automatically next time. Promotion is a **separate, deliberate act** — never a side effect of resolving.
+
+This is the second project in a 4-part AI engineering portfolio, building on patterns from [Mizan](https://github.com/OmarAmir2001/mizan) (CRAG, long-term memory) and adding orthogonal confidence gating, an async ticket lifecycle, and a human-gated learning loop.
 
 ---
 
-## Core Design Principles
+## Core design principles
 
-This project is built on a set of deliberate architecture decisions:
-
-- **Two databases, one source of truth.** MongoDB holds documents and state (student profiles, escalation tickets). pgvector holds embeddings. Mongo (and the handbook files on disk) are the **source of truth**; pgvector is a **rebuildable derived index**. Data flows one direction only: source → pgvector.
-- **Escalation is decided by orthogonal judges, not a self-reported confidence score.** The agent runs separate single-purpose checks (context relevance → faithfulness → answer relevance) and escalates if **any** of them fails. No "rate your confidence 0–1."
-- **Escalation ends the run; resolution is a fresh run.** The graph does not stay paused waiting for a human who may take hours or days. It writes a ticket and ends. When the advisor resolves, a separate short run reconnects to the same conversation via `thread_id`.
-- **The learning loop is human-gated.** Resolving a ticket delivers the answer to the student. Promoting that answer into the knowledge base is a *separate*, human-confirmed act — the machine only pre-fills the decision. The handbook always outranks resolved-ticket answers.
-- **Clean separation.** Graph nodes are thin orchestrators; all real logic (LLM calls, DB queries, ticket state) lives in controllers that both the graph and the API reuse.
+- **One source of truth, one derived index.** Postgres holds the authoritative state — tickets, chunks, conversation checkpoints. The pgvector collection is a **rebuildable projection** of it. Data flows one way: source → vectors. Drop the collection and re-push; nothing authoritative is lost.
+- **Escalation is decided by orthogonal judges, never a self-reported confidence score.** Three single-purpose checks, each judging a different thing against different evidence. Escalate if **any** fails. No "rate your confidence 0–1" — models are badly calibrated at that, and averaging several prompts of the same model adds no independent information.
+- **Escalation ends the run; resolution is a separate write.** An open ticket costs a database row, not a live process. That is what survives a restart and scales past a handful of open tickets.
+- **The judges fail closed.** An unparseable or unreachable judge escalates to a human. Failing open would wave answers through precisely when the verification machinery is broken.
+- **Promotion is human-gated and additive-only.** The handbook always outranks promoted ticket answers, enforced at retrieval — pgvector has no concept of "authoritative", and ticket answers are phrased in student language, so they out-retrieve formal policy text unless you rank deliberately.
+- **Thin nodes, real logic in controllers.** A graph node reads state, calls one controller method, writes the result back. Every controller is testable without a graph, and the advisor's HTTP endpoint reuses the exact method the graph uses.
 
 ---
 
 ## Architecture
 
 ```
-Student Question
-    │
-    ▼
-load_memory              ← reads the student profile (single patched JSON doc)
-    │
-    ▼
-retrieve_node            ← embeds query, searches pgvector (filtered by department: CS/IS)
-    │
-    ▼
-context_relevance_gate   ← LLM judge: do retrieved chunks actually address the question?
-    │
-    ├── fails ──────────► escalate_node ──► writes ticket (status: pending) ──► RUN ENDS
-    │                                        "I've escalated this to an advisor."
-    │
-    └── passes
-            │
-            ▼
-     generate_response
-            │
-            ▼
-  faithfulness_+_relevance_gate  ← LLM judge: is the answer grounded AND on-topic?
-            │
-            ├── fails ──────────► escalate_node ──► writes ticket ──► RUN ENDS
-            │
-            └── passes
-                    │
-                    ▼
-              save_memory        ← Trustcall patches the student profile (async, small model)
-                    │
-                    ▼
-                   END
+POST /api/v1/chat
+   │
+   ▼
+retrieve_node            embed query → pgvector search → department filter →
+   │                     handbook-precedence ordering
+   ▼
+grade_node               Gate 1: context relevance (pre-generation, cheapest first)
+   │
+   ├── fails ──────────► escalate_node ──► ticket (pending) ──► RUN ENDS
+   │                                       "I've escalated this to an advisor."
+   └── passes
+          │
+          ▼
+   generate_node         answer built only from the retrieved excerpts
+          │
+          ├── no answer ─► escalate_node ──► RUN ENDS
+          └── drafted
+                 │
+                 ▼
+          judge_node     Gate 2a: faithfulness   ┐ run concurrently — independent
+                         Gate 2b: answer relevance ┘ checks, so no added latency
+                 │
+                 ├── either fails ─► escalate_node ──► RUN ENDS
+                 └── both pass ────► END  (answer returned to the student)
 ```
 
-**The escalation resolution path (a separate run, hours/days later):**
+Gate 1 scores **coverage** of the retrieved excerpts, before paying for a generation call. Gate 2a decomposes the drafted answer into individual claims and scores `supported / total`. Gate 2b deliberately **does not see the excerpts** — an answer can be perfectly grounded and still answer the wrong question, and showing it the excerpts would reintroduce exactly the blind spot faithfulness already has.
+
+**Resolution — a separate request, hours or days later:**
 
 ```
-Advisor opens dashboard ──► sees pending tickets (from Mongo)
-    │
-    ▼
-picks one (→ under_review), types an answer
-    │
-    ├─► answer delivered to the student (waits in persisted thread state; student sees it on return)
-    │
-    ▼
-machine pre-checks: is this answer general? does it contradict the handbook?
-    │
-    ▼
-advisor confirms the "Add to knowledge base" checkbox
-    │
-    ├── checked  ──► answer embedded into pgvector as `instructor_resolved`
-    │                (unless it contradicts the handbook → held for handbook review)
-    │
-    ▼
-ticket → resolved
+Advisor lists pending tickets       GET  /api/v1/escalation/tickets?ticket_status=pending
+   │                                    (question, which gate tripped and why,
+   ▼                                     and the excerpts the bot actually saw)
+claims one                          POST /api/v1/escalation/tickets/{id}/claim   → under_review
+   │
+   ▼
+submits an answer                   POST /api/v1/escalation/tickets/{id}/resolve → resolved
+   │
+   ├─► written into the persisted thread state, keyed by the ticket's thread_id
+   │   → the student reads it from GET /api/v1/chat/{thread_id} on their next visit
+   │
+   └─► if promote_to_kb: embedded into pgvector as `instructor_resolved`,
+       tagged with ticket_id, via delete-then-insert so a re-sync cannot duplicate it
 ```
 
----
-
-## Key Features
-
-- [ ] **Corrective RAG (CRAG)** with orthogonal, single-purpose LLM-judge gates (context relevance, faithfulness, answer relevance)
-- [ ] **Department-aware retrieval** — filters pgvector results to CS or IS handbook based on the student profile
-- [ ] **Confidence-based escalation** — escalates if any judge gate fails, rather than guessing
-- [ ] **Async ticket lifecycle** — escalation ends the graph run; resolution is a separate run reconnected by `thread_id`
-- [ ] **Structured escalation summaries** — advisor sees student context, the question, what was retrieved, and which gate tripped and why
-- [ ] **Ticket state machine** — `pending → under_review → resolved / rejected`, plus `reopened` and `duplicate`, with full `status_history`
-- [ ] **Long-term student memory** — single patched profile (name, student ID, department, GPA, preferred language) via LangGraph Store + Trustcall
-- [ ] **Safe self-learning knowledge base** — resolved escalations are promoted to pgvector through a human-gated quality check, never automatically
-- [ ] **Handbook precedence** — the handbook always outranks resolved-ticket answers; contradictions flag the handbook for review
-- [ ] **FastAPI service layer** — `/chat`, `/history/{student_id}`, `/resolve`, `/health` endpoints with routers and Pydantic validation
-- [ ] **Gradio UI** — chat interface with department selector and escalation status indicator
-- [ ] **Streaming responses**
+Both derived writes are idempotent and repairable from the ticket alone, so neither can fail the advisor's request after their answer has committed.
 
 ---
 
-## Tech Stack
+## What works today
 
-| Component            | Technology                        |
-| -------------------- | --------------------------------- |
-| Agent Framework      | LangGraph                         |
-| LLM (generation)     | Groq — llama-3.3-70b-versatile    |
-| LLM (memory extract) | Smaller/faster model (right-sized)|
-| Embeddings           | intfloat/multilingual-e5-large    |
-| Vector Store         | pgvector (Postgres)               |
-| Document/State Store | MongoDB (Motor, async)            |
-| Checkpointer         | Postgres (LangGraph)              |
-| Memory (short-term)  | LangGraph checkpointer (thread-scoped) |
-| Memory (long-term)   | LangGraph Store + Trustcall       |
-| Validation           | Pydantic v2                       |
-| API Layer            | FastAPI                           |
-| UI                   | Gradio                            |
-| Package Management    | uv                               |
-| Deployment           | HuggingFace Spaces                |
+Verified end to end against real Postgres and live model calls:
 
-> **Note on databases:** Mongo holds tickets and profiles for now; a later migration to consolidate on Postgres is possible but not planned yet. The `thread_id` link between the checkpointer and the escalation ticket works across databases regardless.
+- ✅ **Three orthogonal judge gates** — context relevance (pre-generation), faithfulness and answer relevance (post-generation, concurrent). Every verdict emits one `gate_evaluated` log line with score and threshold.
+- ✅ **Confidence-gated escalation** with the judge's own reason string as the advisor-facing summary.
+- ✅ **Fail-closed judges** — an unparseable verdict escalates rather than passing.
+- ✅ **Ticket lifecycle** — `pending → under_review → resolved / rejected`, plus `reopened`, `closed`, `duplicate`, with a full `ticket_status_history` trail and optimistic concurrency (the expected status is in the `UPDATE ... WHERE`, so two advisors resolving at once cannot silently overwrite each other).
+- ✅ **Passive delivery** — the advisor's answer is written into the LangGraph checkpointer under the original `thread_id`; the student pulls it on return.
+- ✅ **Human-gated promotion** — `promote_to_kb` on resolve; idempotent delete-then-insert keyed on `ticket_id`; un-promoting or reopening removes the vector row.
+- ✅ **Department-aware retrieval** — a CS student is never answered from the IS handbook.
+- ✅ **Handbook precedence at retrieval** — relevance decides which chunks are used, precedence decides the order they are presented in.
+- ✅ **The learning loop closes** — a question that escalated is answered automatically once its resolution is promoted.
+- ✅ **Structured logging** — structlog, JSON, with the graph's `thread_id` bound as `correlation_id`. One grep follows a question from the chat request through each gate verdict into the ticket and on to the advisor's resolution. Uvicorn and SQLAlchemy log through the same renderer, so every line is the same shape.
+- ✅ **Ingestion pipeline** — upload, chunk, embed, push to pgvector, with every chunk tagged `source` and `department` so the filter and the ranking have something real to work with.
+- ✅ **Alembic migrations** and a Postgres checkpointer, both running automatically in the container.
+- ✅ **One-command Docker setup**, and 14 passing tests that need no database.
 
 ---
 
-## Knowledge Base
+## Tech stack
 
-The agent's knowledge base is built from the Higher Institute's official department handbooks:
+| Component               | Technology                                                |
+| ----------------------- | --------------------------------------------------------- |
+| Agent framework         | LangGraph (Postgres checkpointer)                         |
+| LLM — generation        | Groq · `openai/gpt-oss-120b`                              |
+| LLM — judges            | Groq · `openai/gpt-oss-20b` (smaller: up to 3 calls/question) |
+| Embeddings              | Cohere · `embed-multilingual-light-v3.0` (384-dim)        |
+| Vector store            | pgvector                                                  |
+| Tickets, chunks, assets | Postgres · SQLAlchemy 2 async + asyncpg                   |
+| Migrations              | Alembic                                                   |
+| Validation              | Pydantic v2 + pydantic-settings                           |
+| API layer               | FastAPI                                                   |
+| Logging                 | structlog (JSON, correlation ids)                         |
+| Packaging               | uv · Python 3.13                                          |
+| Local orchestration     | Docker Compose                                            |
 
-- `CS_2023.md` — Computer Science department handbook
-- `IS_2023.md` — Information Systems department handbook
+**One database, three drivers.** The app talks to Postgres over **asyncpg**, LangGraph's `AsyncPostgresSaver` over **psycopg 3**, and Alembic over **psycopg2**. All three URLs are built from the same `Settings` object, so they cannot drift.
 
-Each file is split by section headers (`##`) into chunks, embedded with `multilingual-e5-large`, and stored in pgvector with metadata (`source`, `section`) so retrieved answers can be traced back to the exact handbook section. Resolved escalations that pass the human-gated quality check are added as additional chunks tagged `source: instructor_resolved` and linked back to their Mongo ticket via `ticket_id`.
+> There is no MongoDB. Earlier design notes describe Mongo as the source of truth for tickets; that was consolidated onto Postgres, which means resolving a ticket — loading thread state and writing the promoted answer to vectors — touches one database.
 
----
-
-## Project Structure
-
-```
-app.py                     # Gradio UI — entry point
-api/
-  main.py                  # FastAPI app
-  routers/
-    chat.py                # /chat, /history, /health
-    escalation.py          # /resolve + advisor endpoints
-controllers/               # all real logic lives here
-  retrieval.py             # RetrievalController — pgvector query + department filter
-  grading.py               # GradingController — the CRAG judge gates
-  escalation.py            # EscalationController — ticket lifecycle + vector sync
-  memory.py                # MemoryController — Trustcall extractor (small model, gated)
-model/                     # data shapes ONLY (no logic)
-  state.py                 # graph State schema
-  schemas.py               # Pydantic models: GateResult, Ticket, StudentProfile
-graph/                     # thin nodes + edges + wiring
-  nodes.py                 # thin nodes (read state → call controller → write state)
-  edges.py                 # conditional edges (read verdict → point)
-  builder.py               # graph assembly + checkpointer + compile
-data/                      # database access ONLY
-  vector_store.py          # pgvector access
-  mongo.py                 # Mongo ticket + profile access
-  checkpointer.py          # Postgres checkpointer setup
-ingest/
-  ingest.py                # handbook chunking + embedding
-docs/
-  CS_2023.md
-  IS_2023.md
-  DESIGN_NOTES.md          # full design rationale for all of the above
-pyproject.toml             # project metadata + dependencies (uv)
-uv.lock
-.env                       # API keys (not committed)
-```
-
-**Dependency direction:** `api/` and `graph/` call `controllers/`; `controllers/` call `data/`. Never the reverse.
+A Qdrant provider also exists behind the same `VectorDBInterface`, selectable with `VECTOR_DB_BACKEND=QDRANT`, but only the pgvector path is exercised.
 
 ---
 
-## How It Works
+## Knowledge base
 
-### 1. Ingestion (`ingest/ingest.py`)
+Built from the institute's official handbooks in `data/handbooks/`:
 
-`CS_2023.md` and `IS_2023.md` are split by section headers, embedded with `multilingual-e5-large`, and upserted into pgvector with `source` and `section` metadata for filtered, traceable retrieval. Ingestion is idempotent — re-running after a handbook edit replaces the affected chunks (delete-then-insert keyed on `source` + `section`) rather than duplicating them.
+- `CS_2023.md` — Computer Science
+- `IS_2023.md` — Information Systems
 
-### 2. CRAG + Escalation Loop (`graph/`)
+Chunks are embedded into pgvector with metadata that retrieval depends on:
 
-**retrieve_node** — embeds the query, filters pgvector results by the student's department if known.
+| Metadata key | Purpose                                                              |
+| ------------ | -------------------------------------------------------------------- |
+| `source`     | `CS_2023` / `IS_2023` / `instructor_resolved` — drives precedence      |
+| `department` | `CS` / `IS` / unset (shared) — drives the retrieval filter            |
+| `section`    | Handbook section, so an answer can be traced back                     |
+| `ticket_id`  | On promoted answers only: the stable key the sync deletes and re-inserts by |
 
-**context_relevance_gate** — an LLM judge checks whether the retrieved chunks actually address the question. If not, escalate immediately (skip generation).
-
-**generate_response** — combines the retrieved chunks with the student profile to produce an answer.
-
-**faithfulness_+_relevance_gate** — an LLM judge checks that the answer is grounded in the retrieved chunks AND actually addresses the question. If either fails, escalate.
-
-**escalate_node** — writes a structured ticket to Mongo (student context, question, what was retrieved, which gate tripped and why) with `status: pending`, saves the `thread_id`, and **ends the run**.
-
-### 3. Escalation Resolution (`controllers/escalation.py` + `api/routers/escalation.py`)
-
-An advisor reviews pending tickets in a dashboard and answers. Resolution is a **separate short run** keyed to the ticket's `thread_id`: it loads the conversation state from the checkpointer, appends the advisor's message, optionally promotes the answer to the knowledge base (human-gated), and marks the ticket `resolved`. The student sees the answer when they next return.
-
-### 4. Memory (`controllers/memory.py`)
-
-**load_memory** — loads the student's single-document profile at the start of each session.
-
-**save_memory** — Trustcall patches the profile with any new, clearly-stated identity facts, using a small model, gated so it doesn't run on every turn, and off the critical path so it never slows the student's answer.
-
-### 5. The Learning Loop (safe by design)
-
-When an advisor resolves a question, delivering it to the student and promoting it to the knowledge base are **two separate acts**. A generalizability check pre-fills an "Add to knowledge base" checkbox; the advisor confirms. Promoted answers are additive only — the handbook always outranks them at retrieval, and any answer that contradicts the handbook is held and flagged for handbook review rather than added as a competing chunk.
+`source` is normalised to the handbook name rather than the file path, because stored filenames carry a random prefix (`3EsFAHwA7Z8L_CS_2023.md`) and precedence matches on `source`.
 
 ---
 
-## Running Locally
+## Running it
+
+### Docker (one command)
 
 ```bash
-git clone <repo-url>
-cd Customer_Support
+git clone <repo-url> && cd Customer_Support
 
-# Install uv if needed
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Install dependencies
-uv sync
-
-# Set up environment variables
 cp .env.example .env
-# Add GROQ_API_KEY, LANGSMITH_API_KEY, POSTGRES_URL, MONGO_URL
+# Fill in GROQ_API_KEY and COHERE_API_KEY, plus POSTGRES_* credentials
 
-# Run the FastAPI backend
-uv run uvicorn api.main:app --reload
-
-# Run the Gradio UI (separate terminal)
-uv run app.py
+docker compose up --build
 ```
+
+That starts Postgres with pgvector, waits for it to accept connections, applies migrations, and serves the API on <http://127.0.0.1:8000> (docs at `/docs`). `POSTGRES_HOST` is overridden to the `pgvector` service name inside the network, so the same `.env` works on the host and in the container.
+
+### Locally with uv
+
+```bash
+docker compose up -d pgvector      # just the database
+cp .env.example .env               # POSTGRES_HOST=localhost
+cp alembic.ini.example alembic.ini
+
+uv sync
+uv run alembic upgrade head
+uv run uvicorn customer_support.main:app --reload
+```
+
+Set `LOG_JSON=false` for coloured, human-readable logs while developing; keep JSON everywhere else.
+
+### Loading the knowledge base
+
+```bash
+# 1. Upload a handbook (.md, .pdf, .txt, or a pre-chunked .json)
+curl -F "file=@data/handbooks/CS_2023.md" \
+     http://127.0.0.1:8000/api/v1/admin/ingest/1
+
+# 2. Chunk it into Postgres
+curl -X POST http://127.0.0.1:8000/api/v1/admin/process/1 \
+     -H 'Content-Type: application/json' \
+     -d '{"chunk_size":1000,"overlap":50,"do_reset":1}'
+
+# 3. Embed and index into pgvector
+curl -X POST http://127.0.0.1:8000/api/v1/admin/knowledge_base/push/1 \
+     -H 'Content-Type: application/json' -d '{"do_reset":1}'
+```
+
+`KB_COLLECTION_NAME` must match the project you pushed (`collection_1` for project `1`).
+
+### Tests
+
+```bash
+uv run pytest tests -q --no-cov
+```
+
+No database, no API keys, no graph — the gates, the ticket state machine and the retrieval ranking are all pure logic by design.
 
 ---
 
-## Skills Demonstrated
+## API
 
-- Corrective RAG with orthogonal, single-purpose judge gates (hand-written, not framework-dependent)
-- Confidence-based escalation and an async human-in-the-loop resolution flow
-- Durable ticket lifecycle reconnected across separate runs via `thread_id`
-- Safe, human-gated self-improving knowledge base (resolved tickets → vector store)
-- Source-of-truth discipline across two databases with idempotent, rebuildable sync
-- Long-term memory with LangGraph Store + Trustcall (single patched profile, right-sized model)
-- pgvector search with metadata filtering and handbook precedence
-- Clean controller-based architecture — thin nodes, reusable logic, testable in isolation
-- FastAPI service layer with routers and Pydantic v2 validation
-- Modern Python tooling — uv
+| Method | Path                                             | Purpose                                            |
+| ------ | ------------------------------------------------ | -------------------------------------------------- |
+| `GET`  | `/`                                              | Health — app name and version                      |
+| `POST` | `/api/v1/chat`                                   | Ask a question. Returns an answer, or an escalation with `ticket_id` |
+| `GET`  | `/api/v1/chat/{thread_id}`                       | Read a conversation, including an advisor's answer  |
+| `GET`  | `/api/v1/escalation/tickets`                     | Advisor queue. Filter by `ticket_status`, `department`; paginated |
+| `GET`  | `/api/v1/escalation/tickets/{id}`                | Full ticket: gate scores and the excerpts the bot saw |
+| `POST` | `/api/v1/escalation/tickets/{id}/claim`          | `pending → under_review`                            |
+| `POST` | `/api/v1/escalation/tickets/{id}/resolve`        | Deliver an answer, optionally promote it to the KB  |
+| `POST` | `/api/v1/admin/ingest/{project_id}`              | Upload a handbook file                              |
+| `POST` | `/api/v1/admin/process/{project_id}`             | Chunk uploaded files into Postgres                  |
+| `POST` | `/api/v1/admin/knowledge_base/push/{project_id}` | Embed and index chunks into pgvector                |
+| `POST` | `/api/v1/admin/knowledge_base/search/{project_id}` | Debug retrieval exactly as the agent sees it      |
+| `GET`  | `/api/v1/admin/index_info/info/{project_id}`     | Collection stats                                    |
+
+`/api/v1/history/...` and `/api/v1/profile/...` are **stubs returning placeholder data** — they are the shape the memory work will fill in. `rejected`, `closed` and `reopened` transitions exist in the state machine and on `EscalationController` but are not yet exposed over HTTP.
+
+---
+
+## Project structure
+
+```
+src/customer_support/
+  main.py                    # lifespan: build clients, wire layers, compile the graph
+  helpers/
+    config.py                # Settings — every threshold and model id
+    logging_config.py        # structlog + correlation ids
+  graph/                     # thin nodes + edges + wiring, no logic
+    nodes.py  edges.py  builder.py  dependencies.py
+  controllers/               # all real logic lives here
+    RetrievalController.py   # pgvector query, department filter, precedence
+    GradingController.py     # the three judge gates
+    GenerationController.py  # answer drafting
+    EscalationController.py  # ticket lifecycle + vector sync (the only writer)
+    judge_prompts.py         # prompts + provenance labelling, versioned as code
+    ProcessController.py     # chunking + metadata tagging
+    KBController.py          # embed and index
+    DataController.py  ProjectController.py  BaseController.py
+  models/                    # data shapes, plus the SQL that persists them
+    TicketModel.py           # the only place ticket SQL is issued
+    ChunkModel.py  AssetModel.py  ProjectModel.py
+    db_schemas/.../ticket.py # tickets + ticket_status_history tables
+    enums/                   # GateEnum, TicketStatusEnum (the state machine)
+    graph/graph_state.py     # the typed state flowing through the graph
+    llm_schemas/             # GateResult, JudgeVerdict — parsed LLM output
+  routers/                   # HTTP only: no queries, no prompts
+    chat.py  escalation.py  admin.py  health.py  schemas/
+  stores/                    # external systems behind interfaces
+    checkpointer.py          # LangGraph Postgres saver
+    llm/                     # LLMInterface + OpenAI/Groq and Cohere providers
+    vectordb/                # VectorDBInterface + pgvector and Qdrant providers
+migrations/                  # Alembic (ignores LangGraph's own checkpoint tables)
+data/handbooks/              # CS_2023.md, IS_2023.md
+tests/                       # gates, ticket transitions, retrieval ranking
+```
+
+**Dependency direction:** `routers/` and `graph/` call `controllers/`; `controllers/` call `models/` and `stores/`. Never the reverse. `EscalationController` receives the graph as an injected `thread_writer` rather than importing it, so the arrow stays one-way.
+
+---
+
+## Configuration worth knowing
+
+| Setting                            | Default | Why it matters                                                        |
+| ---------------------------------- | ------- | --------------------------------------------------------------------- |
+| `GATE_CONTEXT_RELEVANCE_THRESHOLD` | `0.5`   | Starting values, not tuned. These three are the biggest lever on the escalation rate; the `gate_evaluated` log lines are the raw material for tuning them |
+| `GATE_FAITHFULNESS_THRESHOLD`      | `0.8`   |                                                                        |
+| `GATE_ANSWER_RELEVANCE_THRESHOLD`  | `0.7`   |                                                                        |
+| `RETRIEVAL_TOP_K`                  | `5`     | Chunks handed to the generator                                         |
+| `RETRIEVAL_OVERFETCH_FACTOR`       | `3`     | Fetch `top_k × this`, because filtering discards rows                   |
+| `JUDGE_MAX_OUTPUT_TOKENS`          | `1200`  | Reasoning models spend tokens before emitting JSON; too low truncates the verdict and the whole judgement is rejected |
+| `INPUT_DEFAULT_MAX_CHARACTERS`     | `8000` in `.env.example` (unset = no truncation) | `generate_text` truncates its prompt to this — set it below the context size and the excerpts get cut out of the answer prompt |
+| `LOG_JSON`                         | `true`  | `false` for coloured local logs                                        |
+
+---
+
+## Skills demonstrated
+
+- Corrective RAG with orthogonal, single-purpose judge gates — hand-written, no eval framework in the request path
+- Confidence-gated escalation with an async, durable human-in-the-loop resolution flow
+- A ticket lifecycle reconnected across separate requests via `thread_id`, with a real state machine and an audit trail
+- Source-of-truth discipline: an idempotent, rebuildable derived index with delete-then-insert sync keyed on a stable id
+- Retrieval ranking that enforces a policy (handbook precedence) the vector store has no concept of
+- Clean controller architecture — thin nodes, logic reused by both the graph and the API, testable without either
+- Production logging: one renderer for app and library logs, correlation ids through `contextvars`
+- FastAPI + Pydantic v2, SQLAlchemy 2 async, Alembic migrations, Docker Compose, uv
 
 ---
 
 ## Roadmap
 
-- [ ] Phase 1 — Ingest handbooks into pgvector; build retrieve → generate pipeline
-- [ ] Phase 2 — Add the two judge gates and the escalation router
-- [ ] Phase 3 — Build the ticket lifecycle, advisor resolution flow, and `thread_id` reconnection
-- [ ] Phase 4 — Add long-term student memory (single patched profile, gated extraction)
-- [ ] Phase 5 — Add the human-gated learning loop (promotion checkbox, handbook precedence, contradiction flagging)
-- [ ] Phase 6 — Wrap in FastAPI with routers; build Gradio UI; deploy; write final documentation
-- [ ] Later — offline evaluation (Hit Rate / MRR / threshold tuning); stale-ticket scanner; duplicate detection; chunk expiry / re-review
+Deferred deliberately — the core loop works without them:
+
+- [ ] **Long-term student memory** — single patched profile (name, ID, department, GPA, language) via Trustcall, with frequency-gated extraction on a small model, off the critical path. `MemoryController` and the `load_memory` / `save_memory` nodes are not written; `department` currently comes from the request body rather than a stored profile.
+- [ ] **Promotion judges** — a generalizability check to pre-fill the advisor's "add to knowledge base" decision, and a contradiction check that holds promotion and flags the handbook for review. Today `promote_to_kb` is a plain flag the advisor sets.
+- [ ] **Stale-ticket scanner** — one scheduled job over `ticket_status_history` ("time since last transition"), never a timer per ticket. Remind for never-picked-up tickets, auto-close resolved-but-unconfirmed ones.
+- [ ] **Duplicate detection** — match an incoming question against already-resolved tickets and auto-resolve by pointing at the existing answer.
+- [ ] **Offline evaluation** — Hit Rate / MRR on a labelled set, to calibrate the gate thresholds that are currently guessed.
+- [ ] **Advisor endpoints for `reject` / `reopen` / `close`**, and a dashboard UI.
+- [ ] **Streaming responses** and a deployed demo.
 
 ---
 

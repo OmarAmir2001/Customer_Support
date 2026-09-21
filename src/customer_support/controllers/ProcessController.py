@@ -7,6 +7,18 @@ from customer_support.models.enums import ProcessingEnum
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import json
 from langchain_core.documents import Document
+from customer_support.helpers.logging_config import get_logger
+
+
+# Handbook name -> department. Both halves of this mapping are load-bearing at
+# retrieval time: RetrievalController ranks by `source` (handbook chunks outrank
+# instructor-resolved ones) and filters by `department` (a CS student is never
+# answered out of the IS handbook). Neither works unless ingestion writes them, so
+# every chunk gets tagged here, at the one place chunks are created.
+HANDBOOK_DEPARTMENTS = {
+    "CS_2023": "CS",
+    "IS_2023": "IS",
+}
 
 
 class ProcessController(BaseController):
@@ -15,6 +27,37 @@ class ProcessController(BaseController):
 
         self.project_id = project_id
         self.project_path = ProjectController().get_project_path(project_id=project_id)
+        self.logger = get_logger(__name__)
+
+    def identify_handbook(self, file_id: str):
+        """Map a stored file id back to (source, department).
+
+        Stored ids carry a random prefix — `3EsFAHwA7Z8L_CS_2023.md` — and a loader's
+        own `source` is the full path on disk. Either would make
+        `source.startswith("CS_2023")` false, which silently drops handbook chunks
+        BELOW instructor-resolved ones in the ranking. So the handbook name is
+        recovered here and written as a clean `source`.
+        """
+        for handbook, department in HANDBOOK_DEPARTMENTS.items():
+            if handbook.lower() in (file_id or "").lower():
+                return handbook, department
+        return None, None
+
+    def _chunk_metadata(self, file_id: str, base: dict = None) -> dict:
+        """Normalise one chunk's metadata: clean `source`, plus `department`."""
+        metadata = dict(base or {})
+        source, department = self.identify_handbook(file_id)
+
+        if source is not None:
+            metadata["source"] = source
+            metadata["department"] = department
+        else:
+            # Not a recognised handbook: keep whatever source the loader gave, and
+            # leave department unset so the chunk is treated as shared content.
+            metadata.setdefault("source", file_id)
+            metadata.setdefault("department", None)
+
+        return metadata
 
     def get_file_extension(self, file_id: str):
         """
@@ -59,8 +102,11 @@ class ProcessController(BaseController):
         # Split the file content into chunks
         file_content_text = [doc.page_content for doc in file_content]
 
-        # Split the file content metadata into chunks
-        file_content_metadata = [doc.metadata for doc in file_content]
+        # Split the file content metadata into chunks, tagged so retrieval can rank and
+        # filter them. Without this the loader's `source` is a file path.
+        file_content_metadata = [
+            self._chunk_metadata(file_id, doc.metadata) for doc in file_content
+        ]
 
         # Create documents from the file content and metadata
         chunks = text_splitter.create_documents(file_content_text, metadatas=file_content_metadata)
@@ -83,13 +129,18 @@ class ProcessController(BaseController):
         documents = []
         for i,chunk in enumerate(raw_chunks):
             if "text" not in chunk:
-                self.logger.error(f"Error while processing JSON chunk {i}: missing text field")
+                self.logger.error(
+                    "json_chunk_missing_text", file_id=file_id, chunk_index=i
+                )
                 return None
             documents.append(Document(page_content=chunk["text"],
-                                      metadata={
-                                          "source":chunk.get("source"),
-                                          "section":chunk.get("section")
-                                      }))
+                                      metadata=self._chunk_metadata(
+                                          chunk.get("source") or file_id,
+                                          {
+                                              "source":chunk.get("source"),
+                                              "section":chunk.get("section")
+                                          },
+                                      )))
         return documents
             
 

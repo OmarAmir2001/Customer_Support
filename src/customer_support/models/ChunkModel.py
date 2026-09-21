@@ -28,10 +28,9 @@ class ChunkModel(BaseDataModel):
         async with self.db_client() as session:
             async with session.begin():
                 result = await session.execute(select(DataChunk).where(DataChunk.chunk_id == chunk_id))
-                chunk = result.scalar_one_or_none()
-                if result.scalar_one_or_none() is None:
-                    return None
-                return chunk
+                # Consume the result exactly once: the second scalar_one_or_none() on a
+                # spent result is what made this return None for rows that do exist.
+                return result.scalar_one_or_none()
 
     
 

@@ -9,6 +9,9 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql
     environment:
+      # The image wants POSTGRES_USER/DB; the app's .env calls them
+      # POSTGRES_USERNAME/POSTGRES_MAIN_DATABASE. Compose substitutes them from the
+      # project's .env, so the credentials are defined in exactly one place.
       - POSTGRES_USER=${POSTGRES_USERNAME}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=${POSTGRES_MAIN_DATABASE}
@@ -22,8 +25,51 @@ services:
       - backend
     restart: unless-stopped
 
+  app:
+    build:
+      context: .
+    container_name: customer_support_api
+    # Everything the app needs, read at run time. Compose's dotenv parser strips the
+    # quotes and the spaces around `=` that this file uses, so it is consumed as-is.
+    env_file: .env
+    environment:
+      # Inside the compose network Postgres answers to its service name, not
+      # localhost. Values set here override the same keys from env_file, and the
+      # image deliberately contains no .env for them to fight with.
+      POSTGRES_HOST: pgvector
+      POSTGRES_PORT: 5432
+    depends_on:
+      pgvector:
+        # Wait for pg_isready, not just for the container to exist: the first
+        # migration would otherwise race Postgres' own initdb on a fresh volume.
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      # Uploaded handbooks and the local Qdrant store. A named volume keeps them
+      # across image rebuilds; assets/ is gitignored and never enters the image.
+      - assets:/app/assets
+    healthcheck:
+      # python rather than curl, so the runtime image needs no extra packages.
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import sys, urllib.request
+          sys.exit(0 if urllib.request.urlopen("http://127.0.0.1:8000/", timeout=3).status == 200 else 1)
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      # Generous: the first start also runs alembic upgrade head.
+      start_period: 40s
+    networks:
+      - backend
+    restart: unless-stopped
+
 networks:
   backend: {}
 
 volumes:
   pgdata:
+  assets:
