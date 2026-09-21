@@ -1,0 +1,29 @@
+# VCS and local tooling
+.git
+.gitignore
+.vscode
+.ruff_cache
+.pytest_cache
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+
+# Local virtualenv — the image builds its own with `uv sync`
+.venv
+
+# Secrets and machine-local config. The container is configured through compose's
+# env_file at RUN time, so baking these in would only risk shipping credentials
+# inside the image layers.
+.env
+alembic.ini
+
+# Runtime data: uploaded files and the local Qdrant store live in a named volume,
+# not in the image. The handbooks under data/ ARE copied in — they are the
+# knowledge base source, so no blanket *.md rule here.
+assets/
+
+# Build artefacts
+dist/
+build/
+*.egg-info

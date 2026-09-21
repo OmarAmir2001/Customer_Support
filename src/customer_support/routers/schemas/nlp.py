@@ -9,3 +9,5 @@ class PushRequest(BaseModel):
 class SearchRequest(BaseModel):
     query: str
     limit: Optional[int] = 10
+    # Lets an admin exercise the department filter that real chat traffic goes through.
+    department: Optional[str] = None

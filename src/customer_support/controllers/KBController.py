@@ -1,7 +1,7 @@
 from .BaseController import BaseController
 from customer_support.models.db_schemas import Project, DataChunk
 from customer_support.stores.llm.LLMEnum import DocumentTypeEnum
-import logging
+from customer_support.helpers.logging_config import get_logger
 from typing import List
 import json
 
@@ -12,7 +12,7 @@ class KBController(BaseController):
         self.vectordb_client = vectordb_client
         self.generation_client = generation_client
         self.embedding_client = embedding_client
-        self.logger = logging.getLogger(__name__)
+        self.logger = get_logger(__name__)
 
 
     def create_collection_name(self,project_id:str):
@@ -24,9 +24,12 @@ class KBController(BaseController):
 
     async def get_vector_db_collection_info(self,project:Project):
         collection_name = self.create_collection_name(project_id=project.project_id)
-        collection_info = self.vectordb_client.get_collection_info(collection_name=collection_name)
+        collection_info = await self.vectordb_client.get_collection_info(
+            collection_name=collection_name)
 
-        return await json.loads(json.dumps(collection_info, default=lambda o: o.__dict__))
+        # The await belongs on the provider call, not on json.loads: awaiting a dict
+        # raises TypeError, which is what made this endpoint a guaranteed 500.
+        return json.loads(json.dumps(collection_info, default=lambda o: o.__dict__))
 
     async def index_into_vector_db(self,project:Project,chunks:List[DataChunk],chunks_ids:List[int],do_reset:bool=False):
 
@@ -39,9 +42,19 @@ class KBController(BaseController):
         vectors = self.embedding_client.embed_text(
                                     text=texts,
                                     document_type=DocumentTypeEnum.DOCUMENT.value)
-        self.logger.info("texts=%s vectors=%s", len(texts), type(vectors))
+        self.logger.info(
+            "kb_embedding_complete",
+            collection=collection_name,
+            text_count=len(texts),
+            vector_type=type(vectors).__name__,
+        )
         if not vectors or len(vectors) != len(texts):
-            self.logger.error("Embedding failed for collection %s", collection_name)
+            self.logger.error(
+                "kb_embedding_failed",
+                collection=collection_name,
+                text_count=len(texts),
+                vector_count=len(vectors) if vectors else 0,
+            )
             return False
 
         # step 3: create the collection if it doesn't exist

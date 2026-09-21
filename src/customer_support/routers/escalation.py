@@ -1,46 +1,74 @@
-from fastapi import APIRouter
+"""Advisor endpoints. Every one delegates to EscalationController — the same methods
+the graph calls, so resolve logic exists once."""
 
-escalation_router = APIRouter(
-    prefix="/api/v1/escalation",  # Prefix for all routes in this router
-    tags=["Escalation Routes"]  # Tag for documentation purposes
+from fastapi import APIRouter, HTTPException, Query, Request, status
+
+from customer_support.helpers.logging_config import get_logger
+from customer_support.models.enums.TicketStatusEnum import (
+    InvalidTicketTransition,
+    TicketStatus,
 )
-# Placeholder implementation for escalation management.
-@escalation_router.get("/escalations")
-async def get_escalations():
-    """
-     lists all pending escalations waiting for advisor review. 
-     Needed so an advisor has a queue to work from.
-    """
-    # Placeholder response.
-    escalations = [
-        {"escalation_id": "1", "user_id": "123", "issue": "grades not appearing", "status": "open"},
-        {"escalation_id": "2", "user_id": "456", "issue": "assignment resubmission request", "status": "in_progress"},
-        {"escalation_id": "3", "user_id": "789", "issue": "midterm repeat request", "status": "closed"}
-    ]
-    return {"escalations": escalations}
+from customer_support.routers.schemas.escalation import (
+    ClaimRequest,
+    ResolveRequest,
+    TicketDetail,
+    TicketSummary,
+)
 
-@escalation_router.get("/escalation/{escalation_id}")
-async def get_escalation(escalation_id: str):
-    """
-     returns the full escalation summary (student context, question, what was found, why it escalated).
-     Needed so the advisor has enough context to answer.
-    """
-    # Placeholder response.
-    escalation = {
-        "escalation_id": escalation_id,
-        "user_id": "123",
-        "issue": "grades not appearing",
-        "status": "open"
-    }
-    return {"escalation": escalation}
+logger = get_logger(__name__)
 
-@escalation_router.post("/escalation/{escalation_id}/resolve")
-async def resolve_escalation(escalation_id: str):
-    """
-     advisor submits their answer. 
-     This resumes the interrupted graph AND triggers the learning loop (the Q&A gets embedded into Qdrant). 
-     This is the single most important endpoint in the whole project — it's where the "agent gets smarter" 
-     feature actually lives.
-    """
-    # Placeholder response.
-    return {"message": f"Escalation {escalation_id} has been resolved."}
+escalation_router = APIRouter(prefix="/api/v1/escalation", tags=["Escalation"])
+
+
+@escalation_router.get("/tickets", response_model=list[TicketSummary])
+async def list_tickets(
+    request: Request,
+    ticket_status: TicketStatus | None = None,
+    department: str | None = Query(default=None, pattern="^(CS|IS)$"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+) -> list[TicketSummary]:
+    tickets = await request.app.state.ticket_model.list_tickets(
+        status=ticket_status, department=department, page=page, page_size=page_size
+    )
+    return [TicketSummary.model_validate(t) for t in tickets]
+
+
+@escalation_router.get("/tickets/{ticket_id}", response_model=TicketDetail)
+async def get_ticket(request: Request, ticket_id: int) -> TicketDetail:
+    ticket = await request.app.state.ticket_model.get_ticket(ticket_id)
+    if ticket is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    return TicketDetail.model_validate(ticket)
+
+
+@escalation_router.post("/tickets/{ticket_id}/claim", response_model=TicketSummary)
+async def claim_ticket(request: Request, ticket_id: int, payload: ClaimRequest) -> TicketSummary:
+    try:
+        ticket = await request.app.state.escalation_controller.claim(
+            ticket_id=ticket_id, advisor_id=payload.advisor_id
+        )
+    except LookupError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ticket not found") from None
+    except InvalidTicketTransition as exc:
+        # 409, not 400: the request was well-formed, the ticket's state refused it.
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
+
+    return TicketSummary.model_validate(ticket)
+
+
+@escalation_router.post("/tickets/{ticket_id}/resolve", response_model=TicketDetail)
+async def resolve_ticket(request: Request, ticket_id: int, payload: ResolveRequest) -> TicketDetail:
+    try:
+        ticket = await request.app.state.escalation_controller.resolve(
+            ticket_id=ticket_id,
+            advisor_answer=payload.advisor_answer,
+            advisor_id=payload.advisor_id,
+            promote_to_kb=payload.promote_to_kb,
+        )
+    except LookupError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ticket not found") from None
+    except InvalidTicketTransition as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
+
+    return TicketDetail.model_validate(ticket)

@@ -4,7 +4,7 @@ from customer_support.helpers import get_settings, Settings
 from customer_support.controllers import DataController, ProjectController, ProcessController , KBController,RetrievalController
 import aiofiles
 from customer_support.models import ResponseSignal
-import logging
+from customer_support.helpers.logging_config import get_logger
 from .schemas import ProcessRequest,SearchRequest
 from .schemas import PushRequest
 from customer_support.models.ProjectModel import ProjectModel
@@ -17,7 +17,7 @@ from customer_support.models.enums.ProcessingEnum import ProcessingEnum
 import os
 
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 admin_router = APIRouter(
     prefix="/api/v1/admin",  # Prefix for all routes in this router
@@ -57,7 +57,13 @@ async def ingest_data(request: Request,project_id: int, file: UploadFile, app_se
                 await f.write(chunk)
     # Handle any exceptions that occur during file ingestion and return a 500 Internal Server Error response with the appropriate signal and error message.
     except Exception as e:
-        logger.error(f"Error occurred while ingesting file: {e}")
+        logger.error(
+            "file_ingestion_failed",
+            project_id=project_id,
+            file_id=file_id,
+            error=str(e),
+            exc_info=True,
+        )
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"signal": ResponseSignal.FILE_INGESTION_FAILED.value, "error": str(e)}
@@ -148,7 +154,12 @@ async def process_endpoint(request: Request,project_id: int, process_request: Pr
         else:
             file_content = process_controller.get_file_content(file_id=file_id)
             if file_content is None:
-                logger.error(f"Error occurred while processing file: {file_id}")
+                logger.error(
+                    "file_content_unreadable",
+                    project_id=project_id,
+                    asset_id=asset_id,
+                    file_id=file_id,
+                )
                 continue
 
             file_chunks = process_controller.process_file_content(
@@ -197,7 +208,7 @@ async def get_project_index_info(request: Request,project_id: int):
     nlp_controller = KBController(vectordb_client=request.app.state.vectordb_client,
                                       generation_client=request.app.state.generation_client,
                                       embedding_client=request.app.state.embedding_client)
-    collection_info = nlp_controller.get_vector_db_collection_info(project=project)
+    collection_info = await nlp_controller.get_vector_db_collection_info(project=project)
     return JSONResponse(content={
             "signal": ResponseSignal.VECTORDB_SEARCH_SUCCESS.value,
             "collection_info": collection_info
@@ -229,7 +240,6 @@ async def push_knowledge_base(request: Request,project_id: int,push_request: Pus
     has_records = True
     page_no = 1
     inserted_items_count = 0
-    idx = 0
     chunk_model = await ChunkModel.create_instance(request.app.state.db_client)
     while has_records:
         page_chunks = await chunk_model.get_all_chunks_by_project_id(project_id=project.project_id, page=page_no)
@@ -237,12 +247,17 @@ async def push_knowledge_base(request: Request,project_id: int,push_request: Pus
         if not page_chunks or len(page_chunks) == 0:
             has_records = False
             break
-        chunks_ids = list(range(idx,idx+len(page_chunks)))
-        idx+=len(page_chunks)
-        is_inserted = nlp_controller.index_into_vector_db(
+        # The chunks' REAL ids, not a counter. These land in the vector table's chunk_id
+        # column, which is the stable handle back to the source row; a per-push counter
+        # renumbers every chunk on every push and points the FK at arbitrary rows.
+        chunks_ids = [chunk.chunk_id for chunk in page_chunks]
+        is_inserted = await nlp_controller.index_into_vector_db(
                         project=project,
                         chunks=page_chunks,
-                        do_reset=push_request.do_reset,
+                        # First page only: do_reset drops and recreates the collection,
+                        # so forwarding it on every page made each page wipe the last
+                        # and only the final page survived.
+                        do_reset=push_request.do_reset if page_no == 1 else 0,
                         chunks_ids=chunks_ids
                     )
         if not is_inserted:
@@ -270,20 +285,30 @@ async def search_knowledge_base(request: Request,project_id: int, search_request
     """
     project_model = await ProjectModel.create_instance(request.app.state.db_client)
     project = await project_model.get_project_or_create_one(project_id=project_id)
-    nlp_controller = RetrievalController(vectordb_client=request.app.state.vectordb_client,
-                                        generation_client=request.app.state.generation_client,
-                                        embedding_client=request.app.state.embedding_client)
 
-    results = nlp_controller.search_vector_db_collection(project=project,
-                                                         query=search_request.query,
-                                                         limit=search_request.limit)
+    # KBController owns the collection-naming rule, so the name is taken from there
+    # rather than rebuilt by hand in a second place.
+    kb_controller = KBController(vectordb_client=request.app.state.vectordb_client,
+                                 generation_client=request.app.state.generation_client,
+                                 embedding_client=request.app.state.embedding_client)
+    collection_name = kb_controller.create_collection_name(project_id=project.project_id)
+
+    # The same controller the graph uses, so this endpoint shows exactly what the agent
+    # would see — department filter and handbook precedence included.
+    nlp_controller = RetrievalController(vectordb_client=request.app.state.vectordb_client,
+                                         embedding_client=request.app.state.embedding_client,
+                                         collection_name=collection_name)
+
+    results = await nlp_controller.retrieve(question=search_request.query,
+                                            department=search_request.department,
+                                            limit=search_request.limit)
     if not results:
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
             content={"signal": ResponseSignal.VECTORDB_SEARCH_FAILED.value}
         )
-    
+
     return JSONResponse(content={
             "signal": ResponseSignal.VECTORDB_SEARCH_SUCCESS.value,
-            "results": results
+            "results": [doc.model_dump() for doc in results]
             })

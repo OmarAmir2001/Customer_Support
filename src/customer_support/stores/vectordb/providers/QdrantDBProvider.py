@@ -2,7 +2,7 @@ from ..VectorDBInterface import VectorDBInterface
 from ..VectorDBEnum import DistanceMethodEnums
 from qdrant_client import models,QdrantClient
 from typing import List
-import logging
+from customer_support.helpers.logging_config import get_logger
 import uuid
 from customer_support.models.db_schemas import RetrievedDocument
 
@@ -20,7 +20,7 @@ class QdrantDBProvider(VectorDBInterface):
         elif self.distance_method == DistanceMethodEnums.DOT.value:
             self.distance_method = models.Distance.DOT
 
-        self.logger = logging.getLogger(__name__)
+        self.logger = get_logger(__name__)
 
     async def connect(self):
         self.client = QdrantClient(path=self.db_client)
@@ -42,7 +42,9 @@ class QdrantDBProvider(VectorDBInterface):
         if self.is_collection_exists(collection_name=collection_name):
             return self.client.delete_collection(collection_name=collection_name)
         else:
-            self.logger.error(f"Collection {collection_name} does not exist")
+            self.logger.error(
+                "collection_missing", collection=collection_name, operation="delete_collection"
+            )
             return False
 
     async def create_collection(self,collection_name:str,
@@ -64,16 +66,24 @@ class QdrantDBProvider(VectorDBInterface):
                         metadata:dict=None, record_id:str=None):
         
         if not self.is_collection_exists(collection_name=collection_name):
-            self.logger.error(f"Collection {collection_name} does not exist")
+            self.logger.error(
+                "collection_missing", collection=collection_name, operation="insert_one"
+            )
             return False
-        if record_ids is None:
-                record_ids = [uuid.uuid4().hex for _ in text]
+        if record_id is None:
+                record_id = uuid.uuid4().hex
         try:
             _= self.client.upload_record(
                 collection_name=collection_name,
                 records=[models.Record(id=[record_id],vector=vector,payload={"text":text,"metadata":metadata})])
         except Exception as e:
-            self.logger.error(f"Error while inserting batch {e}")
+            self.logger.error(
+                "qdrant_insert_failed",
+                collection=collection_name,
+                operation="insert_one",
+                error=str(e),
+                exc_info=True,
+            )
             return False
 
     async def insert_many( self, collection_name:str , texts:list[str],vectors:list[str]
@@ -84,7 +94,9 @@ class QdrantDBProvider(VectorDBInterface):
             record_ids = list(range(0,len(texts)))
 
         if not self.is_collection_exists(collection_name=collection_name):
-            self.logger.error(f"Collection {collection_name} does not exist")
+            self.logger.error(
+                "collection_missing", collection=collection_name, operation="insert_many"
+            )
             return False
 
         for i in range(0,len(texts),batch_size):
@@ -105,10 +117,41 @@ class QdrantDBProvider(VectorDBInterface):
                     points=batch_points,
                     wait=True)
             except Exception as e:
-                self.logger.error(f"Error while inserting batch {e}")
+                self.logger.error(
+                    "qdrant_insert_failed",
+                    collection=collection_name,
+                    operation="insert_many",
+                    batch_start=i,
+                    error=str(e),
+                    exc_info=True,
+                )
                 return False
 
         return True
+
+    async def delete_by_metadata(self, collection_name: str, key: str, value: str) -> int:
+        """Delete every point whose payload metadata[key] == value.
+
+        Qdrant reports no deleted count, so this returns the number of matching points
+        counted before the delete — the caller only logs it.
+        """
+        if not self.is_collection_exists(collection_name=collection_name):
+            self.logger.error(
+                "collection_missing", collection=collection_name, operation="delete_by_metadata"
+            )
+            return 0
+
+        selector = models.Filter(
+            must=[models.FieldCondition(
+                key=f"metadata.{key}",
+                match=models.MatchValue(value=value),
+            )]
+        )
+        matched = self.client.count(
+            collection_name=collection_name, count_filter=selector, exact=True
+        ).count
+        self.client.delete(collection_name=collection_name, points_selector=selector)
+        return matched
 
     async def search_by_vector(self, collection_name:str, vector: list,limit:int = 10):
 
