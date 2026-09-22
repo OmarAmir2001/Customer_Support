@@ -64,8 +64,11 @@ def make_generate_node(deps: GraphDeps):
         answer = await deps.generation.generate_answer(
             question=state["question"],
             chunks=state["retrieved_chunks"],
-            # Resolved by the router; the node just carries it through.
+            # All three are resolved or loaded by the router; the node just carries
+            # them through. The controller decides how much history to spend.
             language=state.get("language"),
+            profile=state.get("profile"),
+            messages=state.get("messages"),
         )
         if answer is None:
             # Generation failed: treat it as a gate failure so the student gets a

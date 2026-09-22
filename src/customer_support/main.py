@@ -13,17 +13,18 @@ from sqlalchemy.orm import sessionmaker
 from customer_support.controllers.EscalationController import EscalationController
 from customer_support.controllers.GenerationController import GenerationController
 from customer_support.controllers.GradingController import GradingController
+from customer_support.controllers.MemoryController import MemoryController
 from customer_support.controllers.RetrievalController import RetrievalController
 from customer_support.graph.builder import build_graph
 from customer_support.graph.dependencies import GraphDeps
 from customer_support.helpers.config import get_settings
 from customer_support.helpers.logging_config import configure_logging, get_logger
+from customer_support.models.ProfileModel import ProfileModel
 from customer_support.models.TicketModel import TicketModel
 from customer_support.routers.admin import admin_router
 from customer_support.routers.chat import chat_router
 from customer_support.routers.escalation import escalation_router
 from customer_support.routers.health import base_router
-from customer_support.routers.history import history_router
 from customer_support.routers.profile import profile_router
 from customer_support.stores.checkpointer import checkpointer_context
 from customer_support.stores.llm.LLMProviderFactory import LLMProviderFactory
@@ -75,6 +76,16 @@ async def lifespan(app: FastAPI):
             model_id=settings.JUDGE_MODEL_ID or settings.GENERATION_MODEL_ID
         )
 
+        # Memory extraction is an EASY task (pull 'department: CS' out of a
+        # sentence) while answering handbook questions is a hard one, so it gets
+        # its own right-sized client rather than borrowing the 120b generator.
+        memory_client = llm_factory.create(provider_name=settings.GENERATION_BACKEND)
+        memory_client.set_generation_model(
+            model_id=settings.MEMORY_MODEL_ID
+            or settings.JUDGE_MODEL_ID
+            or settings.GENERATION_MODEL_ID
+        )
+
         # --- vector store ---
         vectordb_client = VectorDBProviderFactory(settings, db_client=db_client).create(
             provider=settings.VECTOR_DB_BACKEND
@@ -93,6 +104,9 @@ async def lifespan(app: FastAPI):
         # --- data models ---
         ticket_model = await TicketModel.create_instance(db_client=db_client)
         app.state.ticket_model = ticket_model
+
+        profile_model = await ProfileModel.create_instance(db_client=db_client)
+        app.state.profile_model = profile_model
 
         # --- prompt templates ---
         # One shared instance is safe because TemplateParser is stateless: the
@@ -129,6 +143,18 @@ async def lifespan(app: FastAPI):
         )
         app.state.escalation_controller = escalation
 
+        # Memory sits outside GraphDeps on purpose. Loading happens in the router
+        # (the locale decision needs the profile BEFORE the graph starts) and
+        # saving happens after the response is sent, so neither is a graph node.
+        app.state.memory = MemoryController(
+            extraction_client=memory_client,
+            profile_model=profile_model,
+            settings=settings,
+        )
+        # The chat router reads MEMORY_ENABLED to decide whether to schedule
+        # extraction at all.
+        app.state.settings = settings
+
         # --- graph ---
         checkpointer = await stack.enter_async_context(checkpointer_context(settings))
         graph = build_graph(
@@ -155,6 +181,10 @@ async def lifespan(app: FastAPI):
             generation_model=settings.GENERATION_MODEL_ID,
             locales=list(templates.supported_languages),
             primary_language=templates.primary_language,
+            memory_enabled=settings.MEMORY_ENABLED,
+            memory_model=settings.MEMORY_MODEL_ID
+            or settings.JUDGE_MODEL_ID
+            or settings.GENERATION_MODEL_ID,
         )
         yield
 
@@ -169,4 +199,3 @@ app.include_router(profile_router)
 app.include_router(admin_router)
 app.include_router(chat_router)
 app.include_router(escalation_router)
-app.include_router(history_router)

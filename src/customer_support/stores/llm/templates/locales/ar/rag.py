@@ -12,7 +12,7 @@ prompts per locale instead of one prompt that says "reply in the user's language
 
 from string import Template
 
-VERSION = "rag/ar/v2"
+VERSION = "rag/ar/v3"
 
 #: يحدد هوية المساعد ودوره وحدوده. يُرسل كرسالة النظام (system message).
 #:
@@ -90,3 +90,38 @@ source_handbook_with_section = Template("دليل الطالب $source، الق�
 source_instructor = Template("إجابة سابقة من مرشد أكاديمي")
 
 source_unknown = Template("مقتطف غير موسوم")
+
+# ------------------------------------------------------------ سياق الطالب
+# تُضاف إلى رسالة المستخدم فقط عند وجود ما يُقال، حتى لا يحمل سؤال طالب جديد
+# عناوين فارغة.
+
+#: ما تعرفه الذاكرة طويلة المدى (القسم 6): الهوية، لا الأسئلة السابقة.
+profile_block = Template(
+    "\n".join(
+        [
+            "عن الطالب الذي تجيبه: $profile",
+            "استخدم هذا لتخصيص الإجابة فقط. وهو ليس دليلاً، فلا تذكره أبداً كأنه "
+            "وارد في دليل الطالب.",
+        ]
+    )
+)
+
+#: الأدوار الأخيرة من الحوار، حتى يُفهم سؤال متابعة مثل «وماذا عن نظم المعلومات؟».
+history_block = Template(
+    "\n".join(
+        [
+            "## سابقاً في هذا الحوار",
+            "$history",
+            "",
+            "استخدم هذا لفهم ما يشير إليه الطالب فقط. أما الإجابة نفسها فيجب أن تأتي "
+            "من المقتطفات أدناه.",
+        ]
+    )
+)
+
+history_student = Template("الطالب: $content")
+
+history_assistant = Template("أنت: $content")
+
+#: مُوسَم على حدة لأن دور المرشد الأكاديمي مرجع معتمد، بخلاف دور المساعد السابق.
+history_advisor = Template("المرشد الأكاديمي: $content")

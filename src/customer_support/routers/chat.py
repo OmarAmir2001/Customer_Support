@@ -3,7 +3,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request, status
 
 from customer_support.helpers.locale import negotiate_language
 from customer_support.helpers.logging_config import get_logger, set_correlation_id
@@ -19,6 +19,7 @@ chat_router = APIRouter(prefix="/api/v1/chat", tags=["Chat"])
 async def chat(
     request: Request,
     payload: ChatRequest,
+    background_tasks: BackgroundTasks,
     accept_language: Annotated[str | None, Header()] = None,
 ) -> ChatResponse:
     thread_id = payload.thread_id or str(uuid.uuid4())
@@ -27,16 +28,34 @@ async def chat(
     # gates, into the ticket, and on to the advisor's resolution days later.
     set_correlation_id(thread_id)
 
+    memory = request.app.state.memory
+
+    # READING the profile is on the critical path — the answer depends on it, and the
+    # locale decision below needs it before the graph can start. WRITING it is not,
+    # and is scheduled after the response (Section 6).
+    profile = await memory.load_profile(payload.student_id)
+
     # Resolved once, here, because language negotiation is an HTTP concern. The
     # result rides in the graph state so no node or controller re-derives it.
-    # profile_language stays None until MemoryController lands (Section 6); the
-    # chain just skips that rung until then.
     language = negotiate_language(
         request.app.state.templates,
         requested=payload.language,
-        profile_language=None,
+        profile_language=profile.preferred_language,
         accept_language=accept_language,
     )
+
+    # The stored profile WINS over the request body. Department drives which handbook
+    # is searched, so letting a client assert it means a CS student can read the IS
+    # handbook by claiming to be in IS. The body is a fallback for a student we have
+    # never seen, whose department this turn's extraction may then learn.
+    department = profile.department or payload.department
+    if profile.department and payload.department and profile.department != payload.department:
+        logger.warning(
+            "department_conflict",
+            student_id=payload.student_id,
+            claimed=payload.department,
+            stored=profile.department,
+        )
 
     graph = request.app.state.graph
     config = {"configurable": {"thread_id": thread_id}}
@@ -47,7 +66,8 @@ async def chat(
                 "question": payload.question,
                 "student_id": payload.student_id,
                 "thread_id": thread_id,
-                "department": payload.department,
+                "department": department,
+                "profile": profile,
                 "language": language,
                 # Appended, not assigned: messages carries a reducer, so this
                 # joins the thread's existing transcript instead of replacing it.
@@ -78,6 +98,12 @@ async def chat(
     # is added without being reset above — whereas an id that is only ever written on
     # the escalate path is not.
     escalated = bool(final_state.get("escalate"))
+
+    # Off the critical path: BackgroundTasks runs after the response is sent, so
+    # the student never waits on extraction. MemoryController gates itself — most
+    # turns carry no identity fact and cost no model call at all.
+    if request.app.state.settings.MEMORY_ENABLED:
+        background_tasks.add_task(memory.remember, payload.student_id, payload.question)
 
     return ChatResponse(
         thread_id=thread_id,

@@ -16,11 +16,11 @@ resolution attaches to the same ``thread_id`` hours later. It carries a reducer 
 every write appends instead of replacing.
 """
 
-import operator
 from typing import Annotated, TypedDict
 
 from customer_support.models.db_schemas import RetrievedDocument
-from customer_support.models.graph.conversation import ConversationMessage
+from customer_support.models.graph.conversation import ConversationMessage, append_and_trim
+from customer_support.models.llm_schemas.student_profile import StudentProfile
 
 
 class GraphState(TypedDict, total=False):
@@ -33,11 +33,15 @@ class GraphState(TypedDict, total=False):
     # Nodes read it; nothing downstream re-negotiates.
     language: str
 
+    # Loaded ONCE by the router, on the critical path: the answer depends on reading
+    # it (Section 6). Writing it does not, so extraction runs after the response.
+    profile: StudentProfile
+
     # --- the durable transcript ---
-    # operator.add, so `{"messages": [msg]}` from any node or from an advisor's
-    # out-of-band state update APPENDS. This is the one field a new run must not
-    # reset, and the reason an advisor's answer no longer overwrites the student's.
-    messages: Annotated[list[ConversationMessage], operator.add]
+    # The reducer appends and trims, so `{"messages": [msg]}` from any node — or from
+    # an advisor's out-of-band state update — adds a turn without replacing history,
+    # and a long-lived thread's checkpoint stays bounded.
+    messages: Annotated[list[ConversationMessage], append_and_trim]
 
     # --- retrieval ---
     retrieved_chunks: list[RetrievedDocument]

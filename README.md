@@ -2,7 +2,7 @@
 
 > An AI agent that answers student questions from the CS and IS department handbooks, escalates the ones it cannot answer confidently to a human advisor, and learns from resolved escalations — through a human-gated promotion step, not automatically.
 
-**Status:** 🟢 Core loop working end to end. Long-term student memory and the promotion judges are not built yet — see [Roadmap](#roadmap).
+**Status:** 🟢 Core loop and long-term memory working end to end. The promotion judges and the advisor UI are not built yet — see [Roadmap](#roadmap).
 
 ---
 
@@ -98,7 +98,10 @@ Verified end to end against real Postgres and live model calls:
 - ✅ **Structured logging** — structlog, JSON, with the graph's `thread_id` bound as `correlation_id`. One grep follows a question from the chat request through each gate verdict into the ticket and on to the advisor's resolution. Uvicorn and SQLAlchemy log through the same renderer, so every line is the same shape.
 - ✅ **Ingestion pipeline** — upload, chunk, embed, push to pgvector, with every chunk tagged `source` and `department` so the filter and the ranking have something real to work with.
 - ✅ **Alembic migrations** and a Postgres checkpointer, both running automatically in the container.
-- ✅ **One-command Docker setup**, and 14 passing tests that need no database.
+- ✅ **Long-term student memory** — one patched profile per student (identity, not history). Extraction is frequency-gated (most turns cost no model call), runs on a smaller model, and happens after the response is sent. A patch can never delete a known fact.
+- ✅ **The stored profile outranks the request body** for `department`, so a student cannot read the other handbook by claiming to be in it.
+- ✅ **Conversation transcript** — turns accumulate across runs through a reducer, so an advisor's answer appends instead of overwriting. Bounded in storage (a trim reducer) and in the prompt (a turn cap plus a character budget, oldest evicted first).
+- ✅ **One-command Docker setup**, and 79 passing tests that need no database.
 
 ---
 
@@ -222,7 +225,9 @@ No database, no API keys, no graph — the gates, the ticket state machine and t
 | `POST` | `/api/v1/admin/knowledge_base/search/{project_id}` | Debug retrieval exactly as the agent sees it      |
 | `GET`  | `/api/v1/admin/index_info/info/{project_id}`     | Collection stats                                    |
 
-`/api/v1/history/...` and `/api/v1/profile/...` are **stubs returning placeholder data** — they are the shape the memory work will fill in. `rejected`, `closed` and `reopened` transitions exist in the state machine and on `EscalationController` but are not yet exposed over HTTP.
+`/api/v1/profile/{student_id}` returns what long-term memory knows about a student, and `DELETE` on it wipes that profile (privacy and reset requests). Conversation history is read per thread from `GET /api/v1/chat/{thread_id}`; there is no per-student history endpoint yet — see the roadmap.
+
+`rejected`, `closed` and `reopened` transitions exist in the state machine and on `EscalationController` but are not yet exposed over HTTP.
 
 ---
 
@@ -299,13 +304,31 @@ tests/                       # gates, ticket transitions, retrieval ranking
 
 Deferred deliberately — the core loop works without them:
 
-- [ ] **Long-term student memory** — single patched profile (name, ID, department, GPA, language) via Trustcall, with frequency-gated extraction on a small model, off the critical path. `MemoryController` and the `load_memory` / `save_memory` nodes are not written; `department` currently comes from the request body rather than a stored profile.
+- [ ] **Per-student conversation index** — a `conversations` table (`thread_id` PK, `subject_id`, `created_at`, `last_message_at`, `turn_count`) upserted on each turn. Needed for "continue where I left off", for an advisor to see a student's other threads, and for the stale-ticket scanner to find abandoned ones. The checkpointer cannot answer this: it is keyed by `thread_id` and stores state as opaque blobs, and `tickets` only links a thread to a student when the conversation escalated. Lands with the advisor dashboard.
 - [ ] **Promotion judges** — a generalizability check to pre-fill the advisor's "add to knowledge base" decision, and a contradiction check that holds promotion and flags the handbook for review. Today `promote_to_kb` is a plain flag the advisor sets.
 - [ ] **Stale-ticket scanner** — one scheduled job over `ticket_status_history` ("time since last transition"), never a timer per ticket. Remind for never-picked-up tickets, auto-close resolved-but-unconfirmed ones.
 - [ ] **Duplicate detection** — match an incoming question against already-resolved tickets and auto-resolve by pointing at the existing answer.
 - [ ] **Offline evaluation** — Hit Rate / MRR on a labelled set, to calibrate the gate thresholds that are currently guessed.
-- [ ] **Advisor endpoints for `reject` / `reopen` / `close`**, and a dashboard UI.
+- [ ] **Advisor endpoints for `reject` / `reopen` / `close`**, and the UI — a **Tailwind** front end built to existing designs (student chat + advisor dashboard). Not Gradio; earlier notes that say Gradio are superseded.
 - [ ] **Streaming responses** and a deployed demo.
+- [ ] **Domain-agnostic configuration** (deliberately deferred — see below).
+
+### On making this domain-agnostic
+
+The target is **multi-domain** — one client per deployment, configured — not multi-tenant. Multi-tenant is a different product: `tenant_id` on every table and query, KB partitioning, thread-id scoping, isolation tests.
+
+It is deferred because the coupling is shallow, not because it is hard. The engine layers — gates, ticket lifecycle, source-of-truth sync, locale parser, provider factories — are already domain-neutral. The academic vocabulary is confined to:
+
+- `RetrievalController.HANDBOOK_SOURCES`
+- `ProcessController.HANDBOOK_DEPARTMENTS`
+- `student_profile.DEPARTMENTS`
+- the two `^(CS|IS)$` patterns, in `ChatRequest` and the escalation list query
+- the domain nouns in `locales/*/rag.py`, `judges.py` and `GateFailureReason`
+- `student_id` as a field name (52 occurrences, and part of the public request body)
+
+Generalising means moving those to `Settings`, putting the domain nouns behind placeholders, and adding an `attributes` JSONB bag to the profile for tenant-specific facts like `gpa`. The rule for what stays fixed: **a state field is core if the engine reads it, and an attribute if only prompts and filters read it.** A partition key must exist for retrieval to filter on; that it is called "department" and holds CS/IS is configuration.
+
+Renaming `student_id` is the one item that gets more expensive with time, and the trigger is the UI — that is when a field name first gets hardcoded by a client. Renaming the `instructor_resolved` metadata tag is *not* expensive: pgvector is a rebuildable projection, so it is a re-push.
 
 ---
 

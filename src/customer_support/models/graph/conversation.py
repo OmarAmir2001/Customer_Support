@@ -16,6 +16,23 @@ from pydantic import BaseModel, Field
 
 from customer_support.models.enums.MessageRoleEnum import MessageRole
 
+#: How many turns a thread keeps in its checkpoint.
+#:
+#: A module constant rather than a Setting because the reducer is referenced in the
+#: state's type annotation, which is evaluated at import time — before any Settings
+#: object exists. Prompt-level bounds ARE configurable; this is the storage backstop.
+#:
+#: The bound matters: every turn is serialised into the checkpoint on every write, so
+#: an unbounded list makes each run's write grow with the thread's whole history.
+#: 40 turns is roughly 20 exchanges — far more than any real handbook conversation,
+#: while keeping the row small.
+#:
+#: Trimming loses the oldest turns permanently. That is acceptable because the
+#: checkpoint is conversation WORKING memory, not the audit trail: an escalated
+#: question and the answer it received are durable in the tickets table, and
+#: identity facts are durable in the student profile.
+CONVERSATION_MAX_STORED_TURNS = 40
+
 
 class ConversationMessage(BaseModel):
     model_config = {"frozen": True}
@@ -45,3 +62,24 @@ class ConversationMessage(BaseModel):
         return cls(
             role=MessageRole.ADVISOR, content=content, ticket_id=ticket_id, author=author
         )
+
+
+def append_and_trim(
+    existing: list[ConversationMessage] | None,
+    new: list[ConversationMessage] | None,
+) -> list[ConversationMessage]:
+    """The ``messages`` reducer: append, then keep only the most recent turns.
+
+    Plain ``operator.add`` was correct about appending and silently unbounded — a
+    long-lived thread's checkpoint would grow forever, and every run rewrites the
+    whole list. Trimming here bounds storage at the one place every write goes
+    through, including an advisor's out-of-band ``aupdate_state``.
+
+    Oldest-first eviction, because recent turns are what a follow-up question needs
+    ("what about for IS students?" refers to the turn before it, not to turn 3).
+    """
+    combined = list(existing or []) + list(new or [])
+
+    if len(combined) <= CONVERSATION_MAX_STORED_TURNS:
+        return combined
+    return combined[-CONVERSATION_MAX_STORED_TURNS:]

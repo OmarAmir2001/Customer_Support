@@ -35,6 +35,9 @@ SAMPLE_VARIABLES = {
     "chunk_text": "The programme requires 135 credit hours.",
     "source": "CS_2023",
     "section": "4.2",
+    "profile": "name: Omar, department: CS",
+    "history": "Student: and for IS?\nYou: the IS handbook requires 132 hours.",
+    "content": "and what about for IS students?",
 }
 
 

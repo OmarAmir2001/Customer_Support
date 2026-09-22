@@ -55,6 +55,26 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     LOG_JSON: bool = True
 
+    # --- long-term memory (Section 6) ---
+    MEMORY_ENABLED: bool = True
+    # Extraction is an easy task; answering handbook questions is not. Right-size the
+    # model. Falls back to the judge model, then to the generation model.
+    MEMORY_MODEL_ID: str | None = None
+    MEMORY_MAX_OUTPUT_TOKENS: int = 600
+    MEMORY_TEMPERATURE: float = 0.0
+
+    # --- conversation history in the prompt ---
+    # Two independent bounds. A turn cap alone lets six long advisor answers blow the
+    # budget; a character cap alone spends it on fifty one-word turns. Both, and the
+    # oldest turns are evicted until the rendered block fits.
+    #
+    # These bound the PROMPT. Storage is bounded separately by the messages reducer
+    # (CONVERSATION_MAX_STORED_TURNS), which cannot read settings because it is
+    # referenced in the state's type annotation at import time.
+    CONVERSATION_HISTORY_TURNS: int = 6
+    CONVERSATION_HISTORY_MAX_CHARS: int = 2000
+    CONVERSATION_HISTORY_MAX_CHARS_PER_TURN: int = 400
+
     # --- assistant identity ---
     # Configuration, not prompt text: the name appears in both locales and in the
     # escalation message, and a name hardcoded in four places drifts. Substituted

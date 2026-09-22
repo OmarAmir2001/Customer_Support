@@ -21,7 +21,7 @@ from string import Template
 
 # Bumped whenever the wording changes, so an eval run logged to MLflow can be traced
 # back to the exact prompt text that produced it.
-VERSION = "rag/en/v2"
+VERSION = "rag/en/v3"
 
 #: Defines the assistant's identity, role and hard limits. Sent as the system message.
 #:
@@ -109,3 +109,39 @@ source_handbook_with_section = Template("student handbook $source, section $sect
 source_instructor = Template("answer previously given by an academic advisor")
 
 source_unknown = Template("unlabelled excerpt")
+
+# ----------------------------------------------------------- student context
+# Included in the user message only when there is something to say, so a first-time
+# student's prompt carries no empty headings.
+
+#: What the long-term profile knows (Section 6). Identity, never past questions.
+profile_block = Template(
+    "\n".join(
+        [
+            "About the student you are answering: $profile",
+            "Use this only to tailor the answer. It is NOT evidence — never state it "
+            "back as if it came from the handbook.",
+        ]
+    )
+)
+
+#: Recent turns, so a follow-up like "what about for IS?" resolves.
+history_block = Template(
+    "\n".join(
+        [
+            "## Earlier in this conversation",
+            "$history",
+            "",
+            "Use this only to understand what the student is referring to. The answer "
+            "itself must still come from the excerpts below.",
+        ]
+    )
+)
+
+history_student = Template("Student: $content")
+
+history_assistant = Template("You: $content")
+
+#: Labelled distinctly because an advisor's turn is authoritative in a way the
+#: assistant's own earlier turn is not.
+history_advisor = Template("Academic advisor: $content")
