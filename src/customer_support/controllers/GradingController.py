@@ -20,7 +20,7 @@ from customer_support.models.enums.GateEnum import GateEnum, GateFailureReason
 from customer_support.models.llm_schemas.gate_result import GateResult, JudgeVerdict
 
 from .BaseController import BaseController
-from .judge_prompts import (
+from ..stores.llm.templates.judge_prompts import (
     ANSWER_RELEVANCE_PROMPT,
     CONTEXT_RELEVANCE_PROMPT,
     FAITHFULNESS_PROMPT,

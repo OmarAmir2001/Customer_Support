@@ -7,7 +7,7 @@ from customer_support.helpers.logging_config import get_logger
 from customer_support.models.db_schemas import RetrievedDocument
 
 from .BaseController import BaseController
-from .judge_prompts import ANSWER_PROMPT, ANSWER_SYSTEM_PROMPT, format_excerpts
+from ..stores.llm.templates.judge_prompts import ANSWER_PROMPT, ANSWER_SYSTEM_PROMPT, format_excerpts
 
 
 class GenerationController(BaseController):
