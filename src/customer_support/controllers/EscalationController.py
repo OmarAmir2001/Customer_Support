@@ -17,6 +17,7 @@ from customer_support.models.enums.TicketStatusEnum import (
     TicketStatus,
     assert_transition_allowed,
 )
+from customer_support.models.graph.conversation import ConversationMessage
 from customer_support.models.graph.graph_state import GraphState
 from customer_support.models.TicketModel import TicketModel
 from customer_support.stores.llm.LLMEnum import DocumentTypeEnum
@@ -175,6 +176,21 @@ class EscalationController(BaseController):
             await self.thread_writer.aupdate_state(
                 {"configurable": {"thread_id": ticket.thread_id}},
                 {
+                    # APPENDED, via the messages reducer. This is the fix the whole
+                    # transcript refactor exists for: the advisor's answer is the next
+                    # turn in the conversation, not a correction that erases whatever
+                    # the student was told in between. Section 3 calls this appending
+                    # the instructor's message, and a single `answer` slot could not.
+                    "messages": [
+                        ConversationMessage.advisor(
+                            content=ticket.advisor_answer,
+                            ticket_id=ticket.ticket_id,
+                            author=ticket.resolved_by,
+                        )
+                    ],
+                    # Still mirrored onto the run-scoped fields so a client reading
+                    # only "the latest answer" sees the advisor's, not the holding
+                    # message. The transcript above is what actually preserves history.
                     "answer": ticket.advisor_answer,
                     "resolved_by": ticket.resolved_by,
                     "ticket_id": ticket.ticket_id,

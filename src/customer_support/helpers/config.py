@@ -55,6 +55,19 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     LOG_JSON: bool = True
 
+    # --- assistant identity ---
+    # Configuration, not prompt text: the name appears in both locales and in the
+    # escalation message, and a name hardcoded in four places drifts. Substituted
+    # into the prompts as $assistant_name.
+    ASSISTANT_NAME: str = "Murshid"
+
+    # --- language ---
+    # PRIMARY_LANG is what a request with no stated preference gets. DEFAULT_LANG is
+    # the floor the parser falls back to when a requested locale has no translation,
+    # so it must be the one locale that is always complete.
+    PRIMARY_LANG: str = "en"
+    DEFAULT_LANG: str = "en"
+
     # --- retrieval ---
     KB_COLLECTION_NAME: str = "collection_1"
     RETRIEVAL_TOP_K: int = 5
