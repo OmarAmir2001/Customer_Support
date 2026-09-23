@@ -237,36 +237,50 @@ async def push_knowledge_base(request: Request,project_id: int,push_request: Pus
                                   generation_client=request.app.state.generation_client,
                                   embedding_client=request.app.state.embedding_client)
 
-    has_records = True
+    # Collect every chunk BEFORE syncing, rather than syncing page by page.
+    #
+    # sync_sections replaces one (source, section) group at a time. A section's
+    # chunks can straddle a page boundary, so syncing per page would have page 2
+    # delete the rows page 1 had just inserted for the same section — silently
+    # losing them. get_all_chunks_by_project_id has no ORDER BY either, so which
+    # chunks land together is not even deterministic.
+    #
+    # Reading a project's chunks into memory is fine at handbook scale (hundreds).
+    # A corpus large enough to matter would need paging BY SECTION, not by row.
+    all_chunks = []
     page_no = 1
-    inserted_items_count = 0
     chunk_model = await ChunkModel.create_instance(request.app.state.db_client)
-    while has_records:
-        page_chunks = await chunk_model.get_all_chunks_by_project_id(project_id=project.project_id, page=page_no)
-
-        if not page_chunks or len(page_chunks) == 0:
-            has_records = False
+    while True:
+        page_chunks = await chunk_model.get_all_chunks_by_project_id(
+            project_id=project.project_id, page=page_no
+        )
+        if not page_chunks:
             break
-        # The chunks' REAL ids, not a counter. These land in the vector table's chunk_id
-        # column, which is the stable handle back to the source row; a per-push counter
-        # renumbers every chunk on every push and points the FK at arbitrary rows.
-        chunks_ids = [chunk.chunk_id for chunk in page_chunks]
-        is_inserted = await nlp_controller.index_into_vector_db(
-                        project=project,
-                        chunks=page_chunks,
-                        # First page only: do_reset drops and recreates the collection,
-                        # so forwarding it on every page made each page wipe the last
-                        # and only the final page survived.
-                        do_reset=push_request.do_reset if page_no == 1 else 0,
-                        chunks_ids=chunks_ids
-                    )
-        if not is_inserted:
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content={"signal": ResponseSignal.VECTORDB_INSERTION_FAILED.value}
-            )
-        inserted_items_count+=len(page_chunks)
-        page_no+=1
+        all_chunks.extend(page_chunks)
+        page_no += 1
+
+    if not all_chunks:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"signal": ResponseSignal.NO_FILES_ERROR.value},
+        )
+
+    # The chunks' REAL ids, not a counter. These land in the vector table's chunk_id
+    # column, which is the stable handle back to the source row; a per-push counter
+    # renumbers every chunk on every push and points the FK at arbitrary rows.
+    result = await nlp_controller.sync_sections(
+        project=project,
+        chunks=all_chunks,
+        chunks_ids=[chunk.chunk_id for chunk in all_chunks],
+        do_reset=push_request.do_reset,
+    )
+    if not result:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"signal": ResponseSignal.VECTORDB_INSERTION_FAILED.value},
+        )
+
+    inserted_items_count = result["inserted"]
 
     return JSONResponse(content={
         "signal": ResponseSignal.VECTORDB_INSERTION_SUCCESS.value,

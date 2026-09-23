@@ -140,8 +140,19 @@ class PgVectorProvider(VectorDBInterface):
                             f'{PgVectorTableSchemeEnums.VECTOR.value} vector({embedding_size}), '
                             f'{PgVectorTableSchemeEnums.METADATA.value} jsonb DEFAULT \'{{}}\', '
                             f'{PgVectorTableSchemeEnums.CHUNK_ID.value} integer NULL, '
+                            # ON DELETE CASCADE encodes Section 1's core claim in the
+                            # schema: this table is a DERIVED projection of `chunks`, so
+                            # a vector row has no meaning once its source chunk is gone.
+                            #
+                            # Without it, re-chunking is impossible: /process with
+                            # do_reset deletes the project's chunks, the vector rows
+                            # still reference them, and Postgres correctly refuses with
+                            # a ForeignKeyViolation. Fixing the delete ORDER in the
+                            # endpoint would work too, but every future caller would
+                            # have to remember it. Cascading makes an orphan
+                            # structurally impossible instead of merely avoided.
                             f'FOREIGN KEY ({PgVectorTableSchemeEnums.CHUNK_ID.value}) '
-                            f'REFERENCES chunks(chunk_id)'
+                            f'REFERENCES chunks(chunk_id) ON DELETE CASCADE'
                         ')'
                     )
                     await session.execute(create_sql)
@@ -157,12 +168,19 @@ class PgVectorProvider(VectorDBInterface):
         ``delete_by_metadata`` is called on every ticket resolve and reopen; without
         this index each of those is a sequential scan over the whole collection.
         """
-        index_name = f"{collection_name}_ticket_id_idx"
+        metadata_column = PgVectorTableSchemeEnums.METADATA.value
         async with self.db_client() as session:
             async with session.begin():
+                # Promoted ticket answers: deleted by ticket_id on every resolve/reopen.
                 await session.execute(sql_text(
-                    f'CREATE INDEX IF NOT EXISTS {index_name} ON {collection_name} '
-                    f"(({PgVectorTableSchemeEnums.METADATA.value} ->> 'ticket_id'))"
+                    f'CREATE INDEX IF NOT EXISTS {collection_name}_ticket_id_idx '
+                    f"ON {collection_name} (({metadata_column} ->> 'ticket_id'))"
+                ))
+                # Handbook chunks: deleted by source+section on every section re-sync.
+                await session.execute(sql_text(
+                    f'CREATE INDEX IF NOT EXISTS {collection_name}_source_section_idx '
+                    f"ON {collection_name} "
+                    f"(({metadata_column} ->> 'source'), ({metadata_column} ->> 'section'))"
                 ))
 
     async def is_index_existed(self, collection_name: str) -> bool:
@@ -330,26 +348,44 @@ class PgVectorProvider(VectorDBInterface):
 
         return True
 
-    async def delete_by_metadata(self, collection_name: str, key: str, value: str) -> int:
-        """Delete every row whose metadata[key] == value. Returns the row count.
+    async def delete_by_metadata(self, collection_name: str, criteria: dict) -> int:
+        """Delete every row matching ALL of `criteria`. Returns the row count.
 
         Half of Section 1's delete-then-insert: the sync deletes by stable key and only
         then inserts the current state, so running it twice cannot leave two rows for
         one logical item.
+
+        Refuses an empty criteria dict rather than treating it as "match everything".
+        An unguarded DELETE with no WHERE would silently empty the collection, and the
+        caller that passed {} by accident would see a plausible-looking row count.
         """
+        if not criteria:
+            self.logger.error("delete_by_metadata_refused_empty", collection=collection_name)
+            return 0
+
         is_collection_existed = await self.is_collection_exists(collection_name=collection_name)
         if not is_collection_existed:
             self.logger.error(
                 "delete_by_metadata_unknown_collection", collection=collection_name)
             return 0
 
+        metadata_column = PgVectorTableSchemeEnums.METADATA.value
+
+        # Enumerated bind names: the criteria KEYS are data, so they are bound as
+        # parameters too rather than interpolated into the SQL.
+        conditions = []
+        params: dict = {}
+        for index, (key, value) in enumerate(criteria.items()):
+            conditions.append(f"{metadata_column} ->> :k{index} = :v{index}")
+            params[f"k{index}"] = key
+            params[f"v{index}"] = str(value)
+
         async with self.db_client() as session:
             async with session.begin():
                 delete_sql = sql_text(
-                    f"DELETE FROM {collection_name} "
-                    f"WHERE {PgVectorTableSchemeEnums.METADATA.value} ->> :key = :value"
+                    f"DELETE FROM {collection_name} WHERE " + " AND ".join(conditions)
                 )
-                result = await session.execute(delete_sql, {"key": key, "value": value})
+                result = await session.execute(delete_sql, params)
                 return result.rowcount
 
     async def search_by_vector(self, collection_name: str, vector: list, limit: int):

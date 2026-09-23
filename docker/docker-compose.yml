@@ -1,4 +1,15 @@
 
+# Lives in docker/ but is built and run against the REPO ROOT.
+#
+# Compose resolves relative paths in this file against THIS directory, and takes
+# its project directory (where it looks for `.env` to expand ${...}) from here
+# too. So every path below points up, and the documented command passes
+# --project-directory .. so the root .env is found for substitution.
+#
+# `name:` is pinned rather than derived from the directory name. Without it the
+# project would have been renamed by this move, and Compose would have created a
+# fresh customer_support_pgdata under a new prefix — silently abandoning the
+# database rather than failing.
 name: customer_support
 services:
   pgvector:
@@ -27,11 +38,15 @@ services:
 
   app:
     build:
-      context: .
+      # The repo root: Dockerfile copies src/, uv.lock and data/ from here.
+      context: ..
+      # Relative to the context, not to this file.
+      dockerfile: docker/Dockerfile
     container_name: customer_support_api
     # Everything the app needs, read at run time. Compose's dotenv parser strips the
     # quotes and the spaces around `=` that this file uses, so it is consumed as-is.
-    env_file: .env
+    # Relative to this file, so it has to climb out of docker/.
+    env_file: ../.env
     environment:
       # Inside the compose network Postgres answers to its service name, not
       # localhost. Values set here override the same keys from env_file, and the

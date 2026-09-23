@@ -45,12 +45,18 @@ class VectorDBInterface(ABC):
         pass
 
     @abstractmethod
-    async def delete_by_metadata(self, collection_name: str, key: str, value: str) -> int:
-        """Delete every row whose metadata[key] == value. Returns the row count.
+    async def delete_by_metadata(self, collection_name: str, criteria: dict) -> int:
+        """Delete every row matching ALL of `criteria`. Returns the row count.
 
         This is the primitive the Section 1 sync is built on: without delete-by-key,
-        re-syncing a ticket leaves the stale vector behind and the agent can retrieve
-        either the old or the corrected answer.
+        re-syncing leaves the stale vector behind and the agent can retrieve either
+        the old or the corrected text.
+
+        Criteria is a dict, not a single key/value pair, because the stable id is not
+        always one field. A promoted ticket answer is keyed on `ticket_id` alone; a
+        handbook chunk is keyed on `source` + `section` together. AND semantics —
+        deleting on either half of a composite key alone would take out far more
+        rows than intended.
         """
         pass
 

@@ -1,4 +1,8 @@
 # syntax=docker/dockerfile:1
+#
+# Built with the REPO ROOT as context, not this directory — the source, uv.lock
+# and handbooks all live up there. compose sets `context: ..` for that reason, and
+# .dockerignore stays at the root because Docker resolves it against the context.
 
 # uv's own image: it ships uv plus the matching CPython, so there is no
 # pip-bootstrap step and no chance of the runtime drifting from .python-version.
@@ -42,5 +46,5 @@ USER appuser
 
 EXPOSE 8000
 
-ENTRYPOINT ["/app/docker-entrypoint.sh"]
+ENTRYPOINT ["/app/docker/docker-entrypoint.sh"]
 CMD ["uvicorn", "customer_support.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -10,6 +10,11 @@ class ChatRequest(BaseModel):
     # Absent on the first message; the client echoes it back afterwards.
     thread_id: str | None = Field(default=None, max_length=64)
     department: str | None = Field(default=None, pattern="^(CS|IS)$")
+    # An explicit per-request override — the highest-priority language signal, above
+    # the stored profile and above Accept-Language. Not pattern-locked to the
+    # supported set: which locales exist is a deployment fact, and the parser falls
+    # back (loudly) rather than rejecting a request over it.
+    language: str | None = Field(default=None, max_length=16)
 
 
 class ChatResponse(BaseModel):

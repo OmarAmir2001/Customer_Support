@@ -18,21 +18,26 @@ from customer_support.helpers.logging_config import get_logger
 from customer_support.models.db_schemas import RetrievedDocument
 from customer_support.models.enums.GateEnum import GateEnum, GateFailureReason
 from customer_support.models.llm_schemas.gate_result import GateResult, JudgeVerdict
-
-from .BaseController import BaseController
-from .judge_prompts import (
-    ANSWER_RELEVANCE_PROMPT,
-    CONTEXT_RELEVANCE_PROMPT,
-    FAITHFULNESS_PROMPT,
+from customer_support.stores.llm.templates import (
+    ANSWER_RELEVANCE_TEMPLATE,
+    CONTEXT_RELEVANCE_TEMPLATE,
+    FAITHFULNESS_TEMPLATE,
+    JUDGE_LANGUAGE,
     JUDGE_SYSTEM_PROMPT,
+    TemplateParser,
     format_excerpts,
 )
 
+from .BaseController import BaseController
+
 
 class GradingController(BaseController):
-    def __init__(self, generation_client, settings=None):
+    def __init__(self, generation_client, templates: TemplateParser, settings=None):
         super().__init__(settings)
         self.generation_client = generation_client
+        # Only needed to render excerpts — the rubrics themselves are single-language
+        # and live in judges.py, not under locales/.
+        self.templates = templates
         self.logger = get_logger(__name__)
 
     # ------------------------------------------------------------------ gates
@@ -55,7 +60,7 @@ class GradingController(BaseController):
 
         verdict = await self._judge(
             gate=GateEnum.CONTEXT_RELEVANCE,
-            prompt=CONTEXT_RELEVANCE_PROMPT.format(
+            prompt=CONTEXT_RELEVANCE_TEMPLATE.substitute(
                 question=question, chunks=self._format_chunks(chunks)
             ),
             fallback_reason=GateFailureReason.NO_RELEVANT_CONTEXT,
@@ -71,7 +76,9 @@ class GradingController(BaseController):
 
         verdict = await self._judge(
             gate=GateEnum.FAITHFULNESS,
-            prompt=FAITHFULNESS_PROMPT.format(answer=answer, chunks=self._format_chunks(chunks)),
+            prompt=FAITHFULNESS_TEMPLATE.substitute(
+                answer=answer, chunks=self._format_chunks(chunks)
+            ),
             fallback_reason=GateFailureReason.NOT_GROUNDED,
         )
         return self._apply_threshold(
@@ -84,7 +91,7 @@ class GradingController(BaseController):
 
         verdict = await self._judge(
             gate=GateEnum.ANSWER_RELEVANCE,
-            prompt=ANSWER_RELEVANCE_PROMPT.format(question=question, answer=answer),
+            prompt=ANSWER_RELEVANCE_TEMPLATE.substitute(question=question, answer=answer),
             fallback_reason=GateFailureReason.OFF_TOPIC,
         )
         return self._apply_threshold(
@@ -171,8 +178,13 @@ class GradingController(BaseController):
             reason=verdict.reason,
         )
 
-    @staticmethod
-    def _format_chunks(chunks: list[RetrievedDocument]) -> str:
-        """Numbered, provenance-labelled excerpts, formatted the same way the generator
-        formats them — see ``judge_prompts.format_excerpts``."""
-        return format_excerpts(chunks)
+    def _format_chunks(self, chunks: list[RetrievedDocument]) -> str:
+        """Numbered, provenance-labelled excerpts, rendered exactly the way the
+        generator renders them so an excerpt carries the same provenance label on
+        both sides of the gate.
+
+        Always JUDGE_LANGUAGE, never the student's locale: the rubric around these
+        excerpts is English, and a prompt that mixes rubric and label languages
+        reads worse to the model than one that is consistently one language.
+        """
+        return format_excerpts(chunks, self.templates, language=JUDGE_LANGUAGE)

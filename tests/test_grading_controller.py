@@ -9,6 +9,7 @@ import pytest
 from customer_support.controllers.GradingController import GradingController
 from customer_support.models.db_schemas import RetrievedDocument
 from customer_support.models.enums.GateEnum import GateEnum
+from customer_support.stores.llm.templates import TemplateParser
 
 
 class FakeLLM:
@@ -32,6 +33,9 @@ class FakeSettings:
     ASSETS_DIR = "assets"
 
 
+TEMPLATES = TemplateParser(primary_language="en", default_language="en")
+
+
 def chunk(text: str, score: float = 0.9) -> RetrievedDocument:
     return RetrievedDocument(text=text, score=score, metadata={"source": "CS_2023"})
 
@@ -39,7 +43,9 @@ def chunk(text: str, score: float = 0.9) -> RetrievedDocument:
 @pytest.mark.asyncio
 async def test_empty_retrieval_fails_without_calling_the_llm():
     llm = FakeLLM(response=None)
-    controller = GradingController(generation_client=llm, settings=FakeSettings())
+    controller = GradingController(
+        generation_client=llm, templates=TEMPLATES, settings=FakeSettings()
+    )
 
     result = await controller.check_context_relevance(question="anything", chunks=[])
 
@@ -51,7 +57,9 @@ async def test_empty_retrieval_fails_without_calling_the_llm():
 @pytest.mark.asyncio
 async def test_grounded_answer_passes_faithfulness():
     llm = FakeLLM('{"score": 1.0, "reason": "every claim appears in the excerpts"}')
-    controller = GradingController(generation_client=llm, settings=FakeSettings())
+    controller = GradingController(
+        generation_client=llm, templates=TEMPLATES, settings=FakeSettings()
+    )
 
     result = await controller.check_faithfulness(
         answer="The withdrawal window is two weeks.",
@@ -65,7 +73,9 @@ async def test_grounded_answer_passes_faithfulness():
 @pytest.mark.asyncio
 async def test_unsupported_claim_fails_faithfulness():
     llm = FakeLLM('{"score": 0.5, "reason": "the claim about a fee is not in the excerpts"}')
-    controller = GradingController(generation_client=llm, settings=FakeSettings())
+    controller = GradingController(
+        generation_client=llm, templates=TEMPLATES, settings=FakeSettings()
+    )
 
     result = await controller.check_faithfulness(
         answer="You may withdraw within two weeks, and the fee is 500 EGP.",
@@ -84,7 +94,9 @@ async def test_broken_judge_fails_closed():
     verification machinery is broken.
     """
     llm = FakeLLM("I think the answer looks pretty good to me!")
-    controller = GradingController(generation_client=llm, settings=FakeSettings())
+    controller = GradingController(
+        generation_client=llm, templates=TEMPLATES, settings=FakeSettings()
+    )
 
     result = await controller.check_answer_relevance(question="q", answer="a")
 

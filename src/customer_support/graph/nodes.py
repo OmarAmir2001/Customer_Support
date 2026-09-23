@@ -10,6 +10,7 @@ functions of (state) from LangGraph's point of view.
 
 from customer_support.helpers.logging_config import get_logger
 from customer_support.models.enums.GateEnum import GateEnum, GateFailureReason
+from customer_support.models.graph.conversation import ConversationMessage
 from customer_support.models.graph.graph_state import GraphState
 from customer_support.models.llm_schemas.gate_result import GateResult
 
@@ -63,6 +64,11 @@ def make_generate_node(deps: GraphDeps):
         answer = await deps.generation.generate_answer(
             question=state["question"],
             chunks=state["retrieved_chunks"],
+            # All three are resolved or loaded by the router; the node just carries
+            # them through. The controller decides how much history to spend.
+            language=state.get("language"),
+            profile=state.get("profile"),
+            messages=state.get("messages"),
         )
         if answer is None:
             # Generation failed: treat it as a gate failure so the student gets a
@@ -87,7 +93,16 @@ def make_judge_node(deps: GraphDeps):
             answer=state["answer"],
             chunks=state.get("retrieved_chunks") or [],
         )
-        return _record_gates(state, results)
+        verdict = _record_gates(state, results)
+
+        if not verdict["escalate"]:
+            # The answer joins the transcript HERE and nowhere earlier: this is
+            # the first point it has survived every gate. Appending it in
+            # generate_node would write an answer that later failed
+            # faithfulness into the student's history.
+            verdict["messages"] = [ConversationMessage.assistant(state["answer"])]
+
+        return verdict
 
     return judge_node
 
@@ -95,11 +110,17 @@ def make_judge_node(deps: GraphDeps):
 def make_escalate_node(deps: GraphDeps):
     async def escalate_node(state: GraphState) -> dict:
         ticket = await deps.escalation.create_ticket(state)
+
+        # The drafted answer is deliberately dropped: an answer that failed a gate
+        # must never reach the student, not even as a "here's my best guess".
+        holding_message = deps.settings.ESCALATION_STUDENT_MESSAGE
         return {
             "ticket_id": ticket.ticket_id,
-            # The drafted answer is deliberately dropped: an answer that failed a gate
-            # must never reach the student, not even as a "here's my best guess".
-            "answer": deps.settings.ESCALATION_STUDENT_MESSAGE,
+            "answer": holding_message,
+            # The holding message is a real turn: the student saw it, and when the
+            # advisor's answer arrives later it must read as the NEXT turn rather
+            # than as a correction that erased this one.
+            "messages": [ConversationMessage.assistant(holding_message)],
         }
 
     return escalate_node

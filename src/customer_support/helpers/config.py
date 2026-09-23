@@ -55,6 +55,39 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     LOG_JSON: bool = True
 
+    # --- long-term memory (Section 6) ---
+    MEMORY_ENABLED: bool = True
+    # Extraction is an easy task; answering handbook questions is not. Right-size the
+    # model. Falls back to the judge model, then to the generation model.
+    MEMORY_MODEL_ID: str | None = None
+    MEMORY_MAX_OUTPUT_TOKENS: int = 600
+    MEMORY_TEMPERATURE: float = 0.0
+
+    # --- conversation history in the prompt ---
+    # Two independent bounds. A turn cap alone lets six long advisor answers blow the
+    # budget; a character cap alone spends it on fifty one-word turns. Both, and the
+    # oldest turns are evicted until the rendered block fits.
+    #
+    # These bound the PROMPT. Storage is bounded separately by the messages reducer
+    # (CONVERSATION_MAX_STORED_TURNS), which cannot read settings because it is
+    # referenced in the state's type annotation at import time.
+    CONVERSATION_HISTORY_TURNS: int = 6
+    CONVERSATION_HISTORY_MAX_CHARS: int = 2000
+    CONVERSATION_HISTORY_MAX_CHARS_PER_TURN: int = 400
+
+    # --- assistant identity ---
+    # Configuration, not prompt text: the name appears in both locales and in the
+    # escalation message, and a name hardcoded in four places drifts. Substituted
+    # into the prompts as $assistant_name.
+    ASSISTANT_NAME: str = "Murshid"
+
+    # --- language ---
+    # PRIMARY_LANG is what a request with no stated preference gets. DEFAULT_LANG is
+    # the floor the parser falls back to when a requested locale has no translation,
+    # so it must be the one locale that is always complete.
+    PRIMARY_LANG: str = "en"
+    DEFAULT_LANG: str = "en"
+
     # --- retrieval ---
     KB_COLLECTION_NAME: str = "collection_1"
     RETRIEVAL_TOP_K: int = 5
@@ -73,6 +106,17 @@ class Settings(BaseSettings):
     # truncates the object and the whole verdict is rejected.
     JUDGE_MAX_OUTPUT_TOKENS: int = 1200
     JUDGE_TEMPERATURE: float = 0.0         # a judge must be reproducible, not creative
+
+    # --- promotion (Section 5) ---
+    # Generalizability only moves a checkbox, so it can afford to be generous:
+    # a wrongly-ticked box costs the advisor one glance, a wrongly-unticked one
+    # silently loses knowledge.
+    PROMOTION_GENERALIZABILITY_THRESHOLD: float = 0.6
+    # Contradiction is a veto a human must clear, so it is deliberately harder to
+    # trip than a gate threshold — a false hold blocks a real answer.
+    PROMOTION_CONTRADICTION_THRESHOLD: float = 0.6
+    # How much handbook context the contradiction check is shown.
+    PROMOTION_CONTEXT_TOP_K: int = 5
 
     # --- escalation ---
     ESCALATION_STUDENT_MESSAGE: str = (
