@@ -23,6 +23,7 @@ non-successful outcome. A rising escalation rate under load is the real degradat
 signal here, and the latency numbers alone will not show it.
 """
 
+import logging
 import random
 import uuid
 
@@ -51,10 +52,27 @@ DEPARTMENTS = ["CS", "IS", None]
 
 @events.quitting.add_listener
 def _assert_healthy(environment, **_kwargs):
-    """Fail the run on a bad result, so headless/CI use has a real exit code."""
-    if environment.stats.total.fail_ratio > 0.05:
+    """Fail the run on a bad result, so headless/CI use has a real exit code.
+
+    The zero-request case is checked FIRST, and it is not defensive padding. A
+    1600-user ConversationUser run produced a completely empty stats table: every
+    request was still in flight, and Locust only records a request when it
+    FINISHES. Over zero requests ``fail_ratio`` is 0.0 and the percentile helper
+    returns 0, so the worst outcome the system has — accepting load and completing
+    none of it — was scoring as a clean pass and exiting 0. A stall has to be
+    louder than a slow run, not silent.
+    """
+    stats = environment.stats.total
+
+    if stats.num_requests == 0:
+        logging.error(
+            "no request completed: the server stalled, or every request is still "
+            "in flight. This is a worse result than a high failure rate, not a better one."
+        )
         environment.process_exit_code = 1
-    elif environment.stats.total.get_response_time_percentile(0.95) > 30_000:
+    elif stats.fail_ratio > 0.05:
+        environment.process_exit_code = 1
+    elif stats.get_response_time_percentile(0.95) > 30_000:
         # The pipeline makes up to five model calls; slow is expected, stalled is not.
         environment.process_exit_code = 1
 
