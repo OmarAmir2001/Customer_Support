@@ -107,6 +107,17 @@ class Settings(BaseSettings):
     JUDGE_MAX_OUTPUT_TOKENS: int = 1200
     JUDGE_TEMPERATURE: float = 0.0         # a judge must be reproducible, not creative
 
+    # --- promotion (Section 5) ---
+    # Generalizability only moves a checkbox, so it can afford to be generous:
+    # a wrongly-ticked box costs the advisor one glance, a wrongly-unticked one
+    # silently loses knowledge.
+    PROMOTION_GENERALIZABILITY_THRESHOLD: float = 0.6
+    # Contradiction is a veto a human must clear, so it is deliberately harder to
+    # trip than a gate threshold — a false hold blocks a real answer.
+    PROMOTION_CONTRADICTION_THRESHOLD: float = 0.6
+    # How much handbook context the contradiction check is shown.
+    PROMOTION_CONTEXT_TOP_K: int = 5
+
     # --- escalation ---
     ESCALATION_STUDENT_MESSAGE: str = (
         "I couldn't answer this from the handbook with confidence, "

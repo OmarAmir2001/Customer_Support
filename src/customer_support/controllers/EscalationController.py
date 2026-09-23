@@ -41,9 +41,14 @@ class EscalationController(BaseController):
         collection_name: str,
         settings=None,
         thread_writer=None,
+        promotion=None,
     ):
         super().__init__(settings)
         self.ticket_model = ticket_model
+        # Section 5's quality gate. Optional so the lifecycle can still be exercised
+        # without it; when absent, promotion falls back to trusting the advisor's
+        # checkbox exactly as it did before the gate existed.
+        self.promotion = promotion
         self.vectordb_client = vectordb_client
         self.embedding_client = embedding_client
         self.collection_name = collection_name
@@ -111,6 +116,31 @@ class EscalationController(BaseController):
         current = TicketStatus(ticket.status)
         assert_transition_allowed(ticket_id, current, TicketStatus.RESOLVED)
 
+        # Section 5's one veto. Re-checked HERE rather than trusted from whatever the
+        # dashboard was shown while the advisor typed: the assessment endpoint is
+        # advisory and a client could skip it, and promotion is the path that can
+        # poison the knowledge base.
+        #
+        # Only runs when the advisor actually ticked the box — an answer that is not
+        # being promoted cannot contradict anything into the KB, so there is nothing
+        # to check and no reason to pay for a judge call.
+        hold_reason = None
+        if promote_to_kb and self.promotion is not None:
+            assessment = await self.promotion.assess(
+                question=ticket.question,
+                answer=advisor_answer,
+                department=ticket.department,
+            )
+            if assessment.held:
+                hold_reason = assessment.hold_reason()
+                promote_to_kb = False
+                self.logger.warning(
+                    "promotion_held_on_contradiction",
+                    ticket_id=ticket_id,
+                    reason=hold_reason,
+                    contradiction_score=round(assessment.contradiction_score, 3),
+                )
+
         ticket = await self.ticket_model.apply_transition(
             ticket_id=ticket_id,
             from_status=current,
@@ -121,6 +151,8 @@ class EscalationController(BaseController):
                 "resolved_by": advisor_id,
                 "promoted_to_kb": promote_to_kb,
                 "promoted_at": datetime.now(UTC) if promote_to_kb else None,
+                "promotion_held": hold_reason is not None,
+                "promotion_hold_reason": hold_reason,
             },
         )
 
@@ -241,8 +273,7 @@ class EscalationController(BaseController):
         # 1. delete by stable key — never "insert the new one and hope"
         deleted = await self.vectordb_client.delete_by_metadata(
             collection_name=self.collection_name,
-            key="ticket_id",
-            value=str(ticket_id),
+            criteria={"ticket_id": str(ticket_id)},
         )
 
         should_index = (

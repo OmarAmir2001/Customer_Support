@@ -14,6 +14,7 @@ from customer_support.controllers.EscalationController import EscalationControll
 from customer_support.controllers.GenerationController import GenerationController
 from customer_support.controllers.GradingController import GradingController
 from customer_support.controllers.MemoryController import MemoryController
+from customer_support.controllers.PromotionController import PromotionController
 from customer_support.controllers.RetrievalController import RetrievalController
 from customer_support.graph.builder import build_graph
 from customer_support.graph.dependencies import GraphDeps
@@ -134,12 +135,25 @@ async def lifespan(app: FastAPI):
         generation = GenerationController(
             generation_client=generation_client, templates=templates, settings=settings
         )
+        # Section 5's quality gate, in front of the automatic ingestion path.
+        # It reuses the judge client (same cheap model, same JSON contract) and the
+        # retrieval controller, because "does this contradict the handbook" is a
+        # retrieval question before it is a judging one.
+        promotion = PromotionController(
+            judge_client=judge_client,
+            retrieval=retrieval,
+            templates=templates,
+            settings=settings,
+        )
+        app.state.promotion_controller = promotion
+
         escalation = EscalationController(
             ticket_model=ticket_model,
             vectordb_client=vectordb_client,
             embedding_client=embedding_client,
             collection_name=collection_name,
             settings=settings,
+            promotion=promotion,
         )
         app.state.escalation_controller = escalation
 

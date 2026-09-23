@@ -129,23 +129,31 @@ class QdrantDBProvider(VectorDBInterface):
 
         return True
 
-    async def delete_by_metadata(self, collection_name: str, key: str, value: str) -> int:
-        """Delete every point whose payload metadata[key] == value.
+    async def delete_by_metadata(self, collection_name: str, criteria: dict) -> int:
+        """Delete every point matching ALL of `criteria`.
 
         Qdrant reports no deleted count, so this returns the number of matching points
         counted before the delete — the caller only logs it.
         """
+        if not criteria:
+            self.logger.error("delete_by_metadata_refused_empty", collection=collection_name)
+            return 0
+
         if not self.is_collection_exists(collection_name=collection_name):
             self.logger.error(
                 "collection_missing", collection=collection_name, operation="delete_by_metadata"
             )
             return 0
 
+        # `must` is AND, matching the interface's contract.
         selector = models.Filter(
-            must=[models.FieldCondition(
-                key=f"metadata.{key}",
-                match=models.MatchValue(value=value),
-            )]
+            must=[
+                models.FieldCondition(
+                    key=f"metadata.{key}",
+                    match=models.MatchValue(value=str(value)),
+                )
+                for key, value in criteria.items()
+            ]
         )
         matched = self.client.count(
             collection_name=collection_name, count_filter=selector, exact=True

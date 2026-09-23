@@ -57,6 +57,13 @@ class Ticket(SQLAlchemyBase):
     promoted_to_kb = Column(Boolean, nullable=False, default=False)
     promoted_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Set when the contradiction check blocked promotion. This is the ONE case where
+    # the machine overrides the advisor's checkbox, so it is recorded on the ticket
+    # rather than only logged: a held answer is a queue of handbook sections that may
+    # be wrong, and someone has to be able to find them.
+    promotion_held = Column(Boolean, nullable=False, default=False)
+    promotion_hold_reason = Column(Text, nullable=True)
+
     duplicate_of = Column(Integer, ForeignKey("tickets.ticket_id"), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

@@ -10,6 +10,8 @@ from customer_support.models.enums.TicketStatusEnum import (
 )
 from customer_support.routers.schemas.escalation import (
     ClaimRequest,
+    PromotionAssessmentRequest,
+    PromotionAssessmentResponse,
     ResolveRequest,
     TicketDetail,
     TicketSummary,
@@ -72,3 +74,49 @@ async def resolve_ticket(request: Request, ticket_id: int, payload: ResolveReque
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
 
     return TicketDetail.model_validate(ticket)
+
+@escalation_router.post(
+    "/tickets/{ticket_id}/promotion-assessment", response_model=PromotionAssessmentResponse
+)
+async def assess_promotion(
+    request: Request, ticket_id: int, payload: PromotionAssessmentRequest
+) -> PromotionAssessmentResponse:
+    """What the machine advises about promoting this answer (Section 5).
+
+    Called WHILE the advisor types, so the draft comes in the body — there is
+    nothing saved to assess yet. Read-only: it writes nothing and decides nothing.
+    The dashboard uses `suggested_promote` to pre-tick the "add to knowledge base"
+    box, and `held` to disable it.
+
+    Advisory only, on purpose. `resolve` re-runs the contradiction check itself
+    rather than trusting whatever this returned, because a client could skip this
+    call entirely and promotion is the path that can poison the knowledge base.
+    """
+    ticket = await request.app.state.ticket_model.get_ticket(ticket_id)
+    if ticket is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+
+    promotion = getattr(request.app.state, "promotion_controller", None)
+    if promotion is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Promotion assessment is not configured.",
+        )
+
+    assessment = await promotion.assess(
+        question=ticket.question,
+        answer=payload.advisor_answer,
+        department=ticket.department,
+    )
+
+    return PromotionAssessmentResponse(
+        suggested_promote=assessment.suggested_promote,
+        held=assessment.held,
+        generalizable=assessment.generalizable,
+        generalizability_score=assessment.generalizability_score,
+        generalizability_reason=assessment.generalizability_reason,
+        contradicts_handbook=assessment.contradicts_handbook,
+        contradiction_score=assessment.contradiction_score,
+        contradiction_reason=assessment.contradiction_reason,
+        compared_against=assessment.compared_against,
+    )
