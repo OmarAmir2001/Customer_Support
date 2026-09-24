@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 from customer_support.helpers import get_settings, Settings
 from customer_support.controllers import DataController, ProjectController, ProcessController , KBController,RetrievalController
 import aiofiles
+from sqlalchemy.exc import MultipleResultsFound
 from customer_support.models import ResponseSignal
 from customer_support.helpers.logging_config import get_logger
 from .schemas import ProcessRequest,SearchRequest
@@ -80,8 +81,12 @@ async def ingest_data(request: Request,project_id: int, file: UploadFile, app_se
 
 
     # Return a success response indicating that the file ingestion was successful.
+    # file_id is the primary key, and /process accepts exactly this value. asset_name
+    # is returned too so a client never has to guess which of the two it was given.
     return JSONResponse( content={"signal": ResponseSignal.FILE_INGESTION_SUCCESS.value,
                                    "file_id": str(asset_record.asset_id),
+                                   "asset_id": asset_record.asset_id,
+                                   "asset_name": asset_record.asset_name,
                                    })
 
 
@@ -109,7 +114,38 @@ async def process_endpoint(request: Request,project_id: int, process_request: Pr
 
     project_files_ids={}
     if process_request.file_id:
-        asset_record = await asset_model.get_asset_by_id(asset_project_id=project.project_id,asset_name=process_request.file_id)
+        # /ingest returns the asset's PRIMARY KEY as "file_id", so that is what this
+        # accepts first. Before this, /process looked the value up by asset_name only:
+        # chaining the two calls the obvious way — take the id from the first, pass it
+        # to the second — failed with FILE_ID_ERROR every time, and the only thing that
+        # worked was passing the original filename.
+        #
+        # The name lookup is kept as the fallback, both for the filenames already in
+        # use and because it is genuinely convenient. It stays second because
+        # asset_name has no unique constraint and the id cannot be ambiguous.
+        asset_record = None
+        if str(process_request.file_id).isdigit():
+            asset_record = await asset_model.get_asset_by_asset_id(
+                asset_project_id=project.project_id, asset_id=int(process_request.file_id)
+            )
+        if asset_record is None:
+            try:
+                asset_record = await asset_model.get_asset_by_id(
+                    asset_project_id=project.project_id, asset_name=process_request.file_id
+                )
+            except MultipleResultsFound:
+                # Same filename uploaded twice. Ambiguous by name, so make the caller
+                # use the id rather than guessing which upload they meant.
+                return JSONResponse(
+                    status_code=status.HTTP_409_CONFLICT,
+                    content={
+                        "signal": ResponseSignal.FILE_ID_ERROR.value,
+                        "error": (
+                            f"more than one asset is named '{process_request.file_id}' in "
+                            "this project; pass the numeric asset id returned by /ingest"
+                        ),
+                    },
+                )
         if asset_record is None:
             return JSONResponse( 
                 status_code=status.HTTP_400_BAD_REQUEST,

@@ -184,6 +184,87 @@ class EscalationController(BaseController):
         await self._sync_quietly(ticket_id)
         return ticket
 
+    async def release(self, ticket_id: int, actor: str, note: str | None = None) -> Ticket:
+        """under_review -> pending. Put a claimed ticket back in the queue.
+
+        The counterpart to claim, and the reason it has to exist: claiming is the only
+        door into under_review, and resolving was the only door out. An advisor who
+        claimed a ticket and then went home left it parked there permanently — absent
+        from the pending queue, owned by nobody, and waiting on a stale-ticket scanner
+        that is still phase 2. Every abandoned claim was a dead ticket and a student
+        who never got an answer.
+
+        No re-sync: nothing that decides indexing has changed.
+        """
+
+        ticket = await self._require_ticket(ticket_id)
+        current = TicketStatus(ticket.status)
+        assert_transition_allowed(ticket_id, current, TicketStatus.PENDING)
+
+        return await self.ticket_model.apply_transition(
+            ticket_id=ticket_id,
+            from_status=current,
+            to_status=TicketStatus.PENDING,
+            actor=actor,
+            note=note,
+        )
+
+    async def reject(self, ticket_id: int, actor: str, reason: str) -> Ticket:
+        """-> rejected. This question will not be answered — out of scope, spam, or
+        something no handbook should carry.
+
+        The reason is required because the rejection history is the only record of the
+        decision, and "why was this refused?" is the first question anyone reviewing
+        the queue will ask.
+
+        Re-syncs deliberately. A rejected ticket must own no vector, and normally it
+        cannot: indexing needs RESOLVED-or-CLOSED plus the promoted flag, and the only
+        route from there to rejected runs through reopen, which clears it. But reopen's
+        sync is best-effort — it logs failures instead of raising — so a vector can
+        outlive the flag that justified it. Rejection is the last state that can clean
+        that up, and the call is idempotent, so doing it here costs one delete on the
+        normal path and closes the hole on the abnormal one.
+        """
+
+        if not reason or not reason.strip():
+            raise ValueError("a rejection needs a reason: it is the only record of why")
+
+        ticket = await self._require_ticket(ticket_id)
+        current = TicketStatus(ticket.status)
+        assert_transition_allowed(ticket_id, current, TicketStatus.REJECTED)
+
+        ticket = await self.ticket_model.apply_transition(
+            ticket_id=ticket_id,
+            from_status=current,
+            to_status=TicketStatus.REJECTED,
+            actor=actor,
+            note=reason,
+            fields={"promoted_to_kb": False, "promoted_at": None},
+        )
+
+        await self._sync_quietly(ticket_id)
+        return ticket
+
+    async def close(self, ticket_id: int, actor: str, note: str | None = None) -> Ticket:
+        """resolved -> closed. The resolution stood; nothing further is needed.
+
+        Does NOT re-sync, and must not: a closed ticket keeps its promoted answer in
+        the knowledge base. See the CLOSED entry in ``sync_ticket_to_vectors``, without
+        which this transition would delete the knowledge the loop just earned.
+        """
+
+        ticket = await self._require_ticket(ticket_id)
+        current = TicketStatus(ticket.status)
+        assert_transition_allowed(ticket_id, current, TicketStatus.CLOSED)
+
+        return await self.ticket_model.apply_transition(
+            ticket_id=ticket_id,
+            from_status=current,
+            to_status=TicketStatus.CLOSED,
+            actor=actor,
+            note=note,
+        )
+
     # -------------------------------------------------- Section 3 delivery
 
     async def _deliver_to_thread(self, ticket: Ticket) -> None:
@@ -276,10 +357,19 @@ class EscalationController(BaseController):
             criteria={"ticket_id": str(ticket_id)},
         )
 
+        # CLOSED counts as indexable, not just RESOLVED. Closing is the happy ending
+        # of a resolution — the answer stood and nothing further is needed — so a
+        # closed ticket keeps its contribution to the knowledge base.
+        #
+        # This is load-bearing rather than tidy. This method's contract is that it can
+        # be re-run at any time and leave the index correct, which is what makes the
+        # best-effort calls to it safe and what the phase-2 repair job will rely on. If
+        # CLOSED were excluded, every closed ticket's answer would be deleted by the
+        # next sync from anywhere — the learning loop would work perfectly right up to
+        # the moment an advisor ticked the box that says "this went well".
+        INDEXABLE = (TicketStatus.RESOLVED.value, TicketStatus.CLOSED.value)
         should_index = (
-            ticket.status == TicketStatus.RESOLVED.value
-            and ticket.promoted_to_kb
-            and bool(ticket.advisor_answer)
+            ticket.status in INDEXABLE and ticket.promoted_to_kb and bool(ticket.advisor_answer)
         )
 
         if not should_index:

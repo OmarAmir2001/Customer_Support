@@ -89,9 +89,10 @@ Verified end to end against real Postgres and live model calls:
 - ✅ **Three orthogonal judge gates** — context relevance (pre-generation), faithfulness and answer relevance (post-generation, concurrent). Every verdict emits one `gate_evaluated` log line with score and threshold.
 - ✅ **Confidence-gated escalation** with the judge's own reason string as the advisor-facing summary.
 - ✅ **Fail-closed judges** — an unparseable verdict escalates rather than passing.
-- ✅ **Ticket lifecycle** — `pending → under_review → resolved / rejected`, plus `reopened`, `closed`, `duplicate`, with a full `ticket_status_history` trail and optimistic concurrency (the expected status is in the `UPDATE ... WHERE`, so two advisors resolving at once cannot silently overwrite each other).
+- ✅ **Ticket lifecycle** — `pending → under_review → resolved / rejected`, plus `release` back to the queue, `closed`, `reopened` from any end state, and `duplicate` (reserved for phase 2). Every transition the state machine permits has an endpoint, guarded by a test that fails if one is ever added without one. Full `ticket_status_history` trail with actor and note, and optimistic concurrency: the expected status is in the `UPDATE ... WHERE`, so two advisors acting at once cannot silently overwrite each other — the loser gets a `409`, not a `500`.
 - ✅ **Passive delivery** — the advisor's answer is written into the LangGraph checkpointer under the original `thread_id`; the student pulls it on return.
-- ✅ **Human-gated promotion** — `promote_to_kb` on resolve; idempotent delete-then-insert keyed on `ticket_id`; un-promoting or reopening removes the vector row.
+- ✅ **Human-gated promotion** — `promote_to_kb` on resolve; idempotent delete-then-insert keyed on `ticket_id`; un-promoting, rejecting or reopening removes the vector row, while **closing keeps it** — closing is the happy ending of a resolution, not a retraction.
+- ✅ **Handbook review queue** — `?promotion_held=true` lists the tickets whose answers the contradiction check blocked, over a partial index built for exactly that query.
 - ✅ **Department-aware retrieval** — a CS student is never answered from the IS handbook.
 - ✅ **Handbook precedence at retrieval** — relevance decides which chunks are used, precedence decides the order they are presented in.
 - ✅ **The learning loop closes** — a question that escalated is answered automatically once its resolution is promoted.
@@ -104,7 +105,7 @@ Verified end to end against real Postgres and live model calls:
 - ✅ **Human-gated promotion judges** — a generalizability check sets the advisor's checkbox default, and a contradiction check *holds* promotion and flags the handbook for review. Deliberately asymmetric: only the contradiction check can block, because a wrong generalizability call would silently discard good knowledge while a wrong hold is merely visible. Both fail safe, in opposite directions.
 - ✅ **Section-aware chunking** — markdown splits on its own headings, so a chunk's `section` is a real citable path (`... > أحكام وشروط الدراسة > مادة (١٠)`) rather than a character offset.
 - ✅ **Idempotent handbook re-ingest** — `sync_sections` delete-then-inserts per `(source, section)`, so pushing twice replaces rather than duplicates, with no full collection rebuild.
-- ✅ **One-command Docker setup** via `make up`, a Locust load profile, and 89 passing tests that need no database.
+- ✅ **One-command Docker setup** via `make up`, a Locust load profile, and 108 passing tests that need no database.
 
 ---
 
@@ -228,19 +229,24 @@ No database, no API keys, no graph — the gates, the ticket state machine and t
 | `GET`  | `/`                                              | Health — app name and version                      |
 | `POST` | `/api/v1/chat`                                   | Ask a question. Returns an answer, or an escalation with `ticket_id` |
 | `GET`  | `/api/v1/chat/{thread_id}`                       | Read a conversation, including an advisor's answer  |
-| `GET`  | `/api/v1/escalation/tickets`                     | Advisor queue. Filter by `ticket_status`, `department`; paginated |
+| `GET`  | `/api/v1/escalation/tickets`                     | Advisor queue. Filter by `ticket_status`, `department`, `promotion_held`; paginated |
 | `GET`  | `/api/v1/escalation/tickets/{id}`                | Full ticket: gate scores and the excerpts the bot saw |
 | `POST` | `/api/v1/escalation/tickets/{id}/claim`          | `pending → under_review`                            |
 | `POST` | `/api/v1/escalation/tickets/{id}/resolve`        | Deliver an answer, optionally promote it to the KB  |
-| `POST` | `/api/v1/admin/ingest/{project_id}`              | Upload a handbook file                              |
-| `POST` | `/api/v1/admin/process/{project_id}`             | Chunk uploaded files into Postgres                  |
+| `POST` | `/api/v1/escalation/tickets/{id}/release`        | `under_review → pending` — hand a claimed ticket back |
+| `POST` | `/api/v1/escalation/tickets/{id}/reject`         | Refuse the question. `reason` required              |
+| `POST` | `/api/v1/escalation/tickets/{id}/close`          | `resolved → closed`. Keeps the promoted answer in the KB |
+| `POST` | `/api/v1/escalation/tickets/{id}/reopen`         | Send a finished ticket back. Un-promotes it         |
+| `POST` | `/api/v1/escalation/tickets/{id}/promotion-assessment` | What the Section 5 judges advise about a draft |
+| `POST` | `/api/v1/admin/ingest/{project_id}`              | Upload a handbook file. Returns `asset_id`          |
+| `POST` | `/api/v1/admin/process/{project_id}`             | Chunk uploaded files into Postgres. `file_id` takes the `asset_id` from `/ingest`, or a filename |
 | `POST` | `/api/v1/admin/knowledge_base/push/{project_id}` | Embed and index chunks into pgvector                |
 | `POST` | `/api/v1/admin/knowledge_base/search/{project_id}` | Debug retrieval exactly as the agent sees it      |
 | `GET`  | `/api/v1/admin/index_info/info/{project_id}`     | Collection stats                                    |
 
 `/api/v1/profile/{student_id}` returns what long-term memory knows about a student, and `DELETE` on it wipes that profile (privacy and reset requests). Conversation history is read per thread from `GET /api/v1/chat/{thread_id}`; there is no per-student history endpoint yet — see the roadmap.
 
-`rejected`, `closed` and `reopened` transitions exist in the state machine and on `EscalationController` but are not yet exposed over HTTP.
+Every transition the state machine permits is now reachable over HTTP, `duplicate` excepted — nothing should be able to park a ticket in a terminal state by hand until duplicate detection exists to justify it. A lifecycle call answers `404` for a missing ticket, `409` for a move the ticket's state refuses *or* for losing a race to another advisor, and `400` for a broken invariant such as a reason-less rejection.
 
 ---
 
@@ -326,11 +332,11 @@ Makefile                     # wraps the compose flags so they cannot be forgott
 Deferred deliberately — the core loop works without them:
 
 - [ ] **Per-student conversation index** — a `conversations` table (`thread_id` PK, `subject_id`, `created_at`, `last_message_at`, `turn_count`) upserted on each turn. Needed for "continue where I left off", for an advisor to see a student's other threads, and for the stale-ticket scanner to find abandoned ones. The checkpointer cannot answer this: it is keyed by `thread_id` and stores state as opaque blobs, and `tickets` only links a thread to a student when the conversation escalated. Lands with the advisor dashboard.
-- [ ] **Handbook review queue** — held tickets are recorded with `promotion_held` and a reason, but nothing surfaces them yet. The partial index exists; the endpoint and dashboard view do not.
+- [ ] **Handbook review view** — the endpoint exists (`?promotion_held=true`) over the partial index; the dashboard screen that works the queue does not.
 - [ ] **Stale-ticket scanner** — one scheduled job over `ticket_status_history` ("time since last transition"), never a timer per ticket. Remind for never-picked-up tickets, auto-close resolved-but-unconfirmed ones.
 - [ ] **Duplicate detection** — match an incoming question against already-resolved tickets and auto-resolve by pointing at the existing answer.
 - [ ] **Offline evaluation** — Hit Rate / MRR on a labelled set, to calibrate the gate thresholds that are currently guessed.
-- [ ] **Advisor endpoints for `reject` / `reopen` / `close`**, and the UI — a **Tailwind** front end built to existing designs (student chat + advisor dashboard). Not Gradio; earlier notes that say Gradio are superseded.
+- [ ] **The UI** — a **Tailwind** front end built to existing designs (student chat + advisor dashboard). Not Gradio; earlier notes that say Gradio are superseded. The API it needs is complete: every lifecycle action has an endpoint.
 - [ ] **Streaming responses** and a deployed demo.
 - [ ] **Domain-agnostic configuration** (deliberately deferred — see below).
 

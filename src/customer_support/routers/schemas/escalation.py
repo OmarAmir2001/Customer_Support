@@ -41,6 +41,41 @@ class ResolveRequest(BaseModel):
     # advisor makes. The generalizability judge only pre-fills this box.
     promote_to_kb: bool = False
 
+
+class ReleaseRequest(BaseModel):
+    """Hand a claimed ticket back to the queue."""
+
+    advisor_id: str = Field(min_length=1, max_length=64)
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class RejectRequest(BaseModel):
+    """Refuse a question outright."""
+
+    advisor_id: str = Field(min_length=1, max_length=64)
+    # Required, unlike the other notes. The status history is the only place this
+    # decision is recorded, and a rejection with no reason is unreviewable later.
+    reason: str = Field(min_length=3, max_length=1000)
+
+
+class CloseRequest(BaseModel):
+    """Finish a resolved ticket. The promoted answer stays in the knowledge base."""
+
+    advisor_id: str = Field(min_length=1, max_length=64)
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class ReopenRequest(BaseModel):
+    """Send a finished ticket back for another look.
+
+    ``actor`` rather than ``advisor_id``: a reopen is the one lifecycle move a student
+    can trigger ("this did not answer my question"), so the field has to carry either.
+    """
+
+    actor: str = Field(min_length=1, max_length=64)
+    note: str | None = Field(default=None, max_length=1000)
+
+
 class PromotionAssessmentRequest(BaseModel):
     """The draft the advisor is typing, before it is saved.
 

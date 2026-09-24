@@ -11,7 +11,7 @@ from customer_support.helpers.logging_config import get_logger
 
 from .BaseDataModel import BaseDataModel
 from .db_schemas.customer_support.schemes.ticket import Ticket, TicketStatusHistory
-from .enums.TicketStatusEnum import TicketStatus
+from .enums.TicketStatusEnum import ConcurrentTicketUpdate, TicketStatus
 
 
 class TicketModel(BaseDataModel):
@@ -66,6 +66,7 @@ class TicketModel(BaseDataModel):
         self,
         status: TicketStatus | None = None,
         department: str | None = None,
+        promotion_held: bool | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> list[Ticket]:
@@ -79,6 +80,14 @@ class TicketModel(BaseDataModel):
             stmt = stmt.where(Ticket.status == status.value)
         if department is not None:
             stmt = stmt.where(Ticket.department == department)
+        if promotion_held is not None:
+            # The handbook review queue. `ix_ticket_promotion_held` is a PARTIAL index
+            # on promotion_held IS TRUE, so the `is True` form is what can use it.
+            stmt = stmt.where(
+                Ticket.promotion_held.is_(True)
+                if promotion_held
+                else Ticket.promotion_held.is_(False)
+            )
 
         stmt = stmt.order_by(Ticket.created_at).offset((page - 1) * page_size).limit(page_size)
 
@@ -115,10 +124,9 @@ class TicketModel(BaseDataModel):
                 )
 
                 if result.scalar_one_or_none() is None:
-                    raise RuntimeError(
-                        f"ticket {ticket_id} was not in status {from_status.value}; "
-                        "another process changed it first"
-                    )
+                    # Typed, not RuntimeError: the router has to tell this apart from a
+                    # genuine fault to answer 409 instead of 500.
+                    raise ConcurrentTicketUpdate(ticket_id, from_status)
 
                 session.add(
                     TicketStatusHistory(
