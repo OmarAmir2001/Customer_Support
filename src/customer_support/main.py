@@ -32,6 +32,9 @@ from customer_support.stores.llm.LLMProviderFactory import LLMProviderFactory
 from customer_support.stores.llm.templates import TemplateParser
 from customer_support.stores.vectordb.VectorDBProviderFactory import VectorDBProviderFactory
 
+# import metrics setup
+from utils.metrics import setup_metrics
+
 logger = get_logger(__name__)
 
 
@@ -207,6 +210,7 @@ async def lifespan(app: FastAPI):
 
 settings = get_settings()
 app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION, lifespan=lifespan)
+setup_metrics(app)
 
 app.include_router(base_router)
 app.include_router(profile_router)
