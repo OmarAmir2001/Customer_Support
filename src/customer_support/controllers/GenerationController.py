@@ -49,8 +49,7 @@ class GenerationController(BaseController):
             # A missing template is a deployment defect, not a bad question. Fail
             # loudly here rather than sending the model a half-built prompt.
             raise RuntimeError(
-                f"rag templates missing for language {language!r}; "
-                "cannot build the answer prompt"
+                f"rag templates missing for language {language!r}; cannot build the answer prompt"
             )
 
         # Same rendering the judges use, so an excerpt carries the same provenance
@@ -78,9 +77,7 @@ class GenerationController(BaseController):
         )
 
         if not answer or not answer.strip():
-            self.logger.error(
-                "generation_empty_answer", chunk_count=len(chunks), language=language
-            )
+            self.logger.error("generation_empty_answer", chunk_count=len(chunks), language=language)
             return None
 
         return answer.strip()
@@ -101,9 +98,12 @@ class GenerationController(BaseController):
         if not described:
             return ""
 
-        return self.templates.get(
-            RAG_GROUP, "profile_block", {"profile": described}, language=language
-        ) or ""
+        return (
+            self.templates.get(
+                RAG_GROUP, "profile_block", {"profile": described}, language=language
+            )
+            or ""
+        )
 
     def _history_section(
         self, messages: list[ConversationMessage] | None, language: str | None
@@ -133,6 +133,7 @@ class GenerationController(BaseController):
         if not rendered:
             return ""
 
-        return self.templates.get(
-            RAG_GROUP, "history_block", {"history": rendered}, language=language
-        ) or ""
+        return (
+            self.templates.get(RAG_GROUP, "history_block", {"history": rendered}, language=language)
+            or ""
+        )

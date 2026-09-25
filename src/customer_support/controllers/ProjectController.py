@@ -1,7 +1,7 @@
-from .BaseController import BaseController
-from fastapi import UploadFile
-from customer_support.models import ResponseSignal
 import os
+
+from .BaseController import BaseController
+
 
 class ProjectController(BaseController):
     def __init__(self):
@@ -15,5 +15,5 @@ class ProjectController(BaseController):
 
         if not os.path.exists(project_dir):
             os.makedirs(project_dir)
-      
+
         return project_dir

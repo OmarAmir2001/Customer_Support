@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class MessageRole(str, Enum):
+class MessageRole(StrEnum):
     """Who spoke a turn in a conversation.
 
     Distinct from ``TicketActor``, which records who moved a TICKET through its

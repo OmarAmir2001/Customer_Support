@@ -144,9 +144,7 @@ def test_a_zero_budget_disables_history_entirely():
 def test_whitespace_is_collapsed():
     """Multi-line answers are flattened so one turn stays one line and the budget
     arithmetic holds."""
-    rendered = format_history(
-        [ConversationMessage.assistant("line one\n\nline  two")], TEMPLATES
-    )
+    rendered = format_history([ConversationMessage.assistant("line one\n\nline  two")], TEMPLATES)
 
     assert rendered.count("\n") == 0
     assert "line one line two" in rendered

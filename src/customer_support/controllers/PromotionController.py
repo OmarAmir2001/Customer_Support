@@ -150,9 +150,7 @@ class PromotionController(BaseController):
             # No context means the contradiction judge sees nothing and scores 0.0 —
             # it cannot invent a conflict, so a retrieval failure degrades to "no
             # hold" rather than blocking the advisor.
-            self.logger.error(
-                "promotion_context_failed", error=str(exc), exc_info=True
-            )
+            self.logger.error("promotion_context_failed", error=str(exc), exc_info=True)
             return []
 
         return [
@@ -187,8 +185,6 @@ class PromotionController(BaseController):
         except (ValidationError, ValueError, json.JSONDecodeError) as exc:
             self.logger.warning("promotion_judge_rejected", check=name, error=str(exc))
         except Exception as exc:
-            self.logger.error(
-                "promotion_judge_failed", check=name, error=str(exc), exc_info=True
-            )
+            self.logger.error("promotion_judge_failed", check=name, error=str(exc), exc_info=True)
 
         return fallback

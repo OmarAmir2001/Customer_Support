@@ -83,5 +83,27 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "ASYNC"]
 
+[tool.ruff.lint.per-file-ignores]
+# A package's __init__.py re-exports the names that make up its public API. Those
+# imports look unused to F401 precisely because nothing in the file uses them —
+# every OTHER module does, via `from customer_support.controllers import X`.
+# Deleting them would not clean anything up; it would break the imports.
+"**/__init__.py" = ["F401"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency injection IS a call in an argument default — that is the
+# documented API, not an oversight, and "fixing" it would break injection. Listed
+# here rather than silenced with a blanket B008 ignore, so a genuinely mutable
+# default in a non-FastAPI signature is still caught.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Body",
+    "fastapi.Header",
+    "fastapi.Path",
+]
+
 [tool.ruff.format]
 quote-style = "double"

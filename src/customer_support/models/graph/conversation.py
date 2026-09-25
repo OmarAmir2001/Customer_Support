@@ -59,9 +59,7 @@ class ConversationMessage(BaseModel):
     def advisor(
         cls, content: str, ticket_id: int, author: str | None = None
     ) -> "ConversationMessage":
-        return cls(
-            role=MessageRole.ADVISOR, content=content, ticket_id=ticket_id, author=author
-        )
+        return cls(role=MessageRole.ADVISOR, content=content, ticket_id=ticket_id, author=author)
 
 
 def append_and_trim(

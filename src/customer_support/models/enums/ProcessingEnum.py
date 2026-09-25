@@ -1,6 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
-class ProcessingEnum(str, Enum):
+
+class ProcessingEnum(StrEnum):
     TXT = ".txt"
     PDF = ".pdf"
     MD = ".md"

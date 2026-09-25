@@ -1,9 +1,9 @@
 from logging.config import fileConfig
-from customer_support.models.db_schemas.customer_support.schemes import SQLAlchemyBase
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
 
 from alembic import context
+from sqlalchemy import engine_from_config, pool
+
+from customer_support.models.db_schemas.customer_support.schemes import SQLAlchemyBase
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -42,6 +42,7 @@ def include_object(object, name, type_, reflected, compare_to):
     if type_ == "table" and name.startswith("checkpoint"):
         return False
     return True
+
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:

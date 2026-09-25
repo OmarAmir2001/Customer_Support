@@ -201,8 +201,12 @@ async def test_both_checks_run():
 
 def test_hold_reason_is_only_present_when_held():
     clean = PromotionAssessment(
-        generalizable=True, generalizability_score=0.9, generalizability_reason="general",
-        contradicts_handbook=False, contradiction_score=0.1, contradiction_reason="no conflict",
+        generalizable=True,
+        generalizability_score=0.9,
+        generalizability_reason="general",
+        contradicts_handbook=False,
+        contradiction_score=0.1,
+        contradiction_reason="no conflict",
     )
     assert clean.hold_reason() is None
     assert clean.suggested_promote

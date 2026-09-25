@@ -1,9 +1,10 @@
-from .customer_support_base import SQLAlchemyBase
-from sqlalchemy import Column, Integer, String, Boolean, DateTime,func,ForeignKey
-from sqlalchemy.dialects.postgresql import UUID, JSONB
-from sqlalchemy.orm import relationship
-from sqlalchemy import Index
 import uuid
+
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, func
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import relationship
+
+from .customer_support_base import SQLAlchemyBase
 
 
 class Asset(SQLAlchemyBase):
@@ -12,7 +13,6 @@ class Asset(SQLAlchemyBase):
     asset_id = Column(Integer, primary_key=True, autoincrement=True)
     asset_uuid = Column(UUID(as_uuid=True), default=uuid.uuid4, unique=True, nullable=False)
 
-
     asset_type = Column(String, nullable=False)
     asset_name = Column(String, nullable=False)
     asset_size = Column(Integer, nullable=False)
@@ -20,13 +20,13 @@ class Asset(SQLAlchemyBase):
 
     asset_project_id = Column(Integer, ForeignKey("project.project_id"), nullable=False)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now(),nullable=False)
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now(),nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now(), nullable=True)
 
     project = relationship("Project", back_populates="assets")
-    chunks=relationship("DataChunk",back_populates="asset")
+    chunks = relationship("DataChunk", back_populates="asset")
 
     __table_args__ = (
         Index("ix_asset_project_id", "asset_project_id"),
-        Index("ix_asset_typr" , "asset_type"),
+        Index("ix_asset_typr", "asset_type"),
     )
