@@ -1,0 +1,275 @@
+# CI. Deployment is deliberately absent — there is no target yet, and a deploy job
+# pointing nowhere is worse than none.
+#
+# Three jobs, running in parallel because none depends on another:
+#
+#   quality  lint, formatting of changed files, and the test suite
+#   config   the files that only fail at deploy time if nobody checks them
+#   image    build the container and prove it actually BOOTS
+#
+# The `image` job is the one that earns its keep. The tests are pure logic by design
+# — no database, no API keys — which makes them fast but means they cannot catch a
+# broken entrypoint, a failed migration, or a permissions problem on the metrics
+# directory. Those only appear when something starts the container for real.
+
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # A second push to the same branch makes the first run's answer irrelevant.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install dependencies
+        # --extra dev is not optional: a bare `uv sync` resolves runtime deps only
+        # and leaves no pytest or ruff to run.
+        run: uv sync --extra dev --frozen
+
+      - name: Lint
+        # The whole repo. This passes as of the lint cleanup; if it starts failing,
+        # something new was added, not something old surfacing.
+        run: uv run ruff check src tests
+
+      - name: Formatting
+        # Repo-wide, which it can be because the whole repo is now formatter-clean.
+        #
+        # This started as a changed-files-only gate, to avoid demanding a large
+        # reformat. That turned out to be the wrong trade twice over: the gate needs
+        # a base commit, which is unreliable on shallow clones, first pushes and
+        # force-pushes, and it fails the moment a lint autofix touches a legacy file
+        # without formatting it. Formatting everything once made the gate two lines
+        # with no edge cases.
+        run: uv run ruff format --check src tests
+      - name: .env.example can actually configure the app
+        # The gate that would have caught a real defect: GENERATION_MODEL_ID_LITERAL
+        # existed in .env but was never added to .env.example, so a fresh clone could
+        # not construct Settings at all — the app died at import. Nothing noticed,
+        # because every existing check ran against a populated local .env.
+        #
+        # Constructing Settings from the example alone is the only honest test of the
+        # claim the README makes: `cp .env.example .env` and it runs.
+        run: |
+          cp .env.example .env
+          uv run python -c "
+          from customer_support.helpers.config import Settings
+          s = Settings()
+          print('Settings constructed from .env.example alone')
+          print('  app:', s.APP_NAME, s.APP_VERSION)
+          print('  vector backend:', s.VECTOR_DB_BACKEND)
+          "
+          rm -f .env
+
+      - name: Tests
+        # No services and no API keys — asserted by running with the keys explicitly
+        # blank. If a test ever starts needing a real one, this fails here rather
+        # than passing locally on a developer's populated .env.
+        env:
+          GROQ_API_KEY: ""
+          COHERE_API_KEY: ""
+        run: uv run pytest tests -q --no-cov
+
+      - name: Coverage report
+        # Reported, never gated. A coverage threshold is a number someone invents and
+        # then games; the useful signal is the trend, which is visible in the log.
+        continue-on-error: true
+        run: uv run pytest tests -q --cov=customer_support --cov-report=term-missing:skip-covered
+
+  config:
+    name: Config and alert rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Seed .env from the example
+        # Proves the example is self-sufficient. A fresh clone has no .env, so if
+        # this step cannot produce a working one, neither can a new contributor.
+        run: cp .env.example .env
+
+      - name: Every compose variable exists in .env.example
+        # The gate that catches a real and quiet failure: adding ${NEW_VAR} to the
+        # compose file without adding it to the example. Compose does not error on a
+        # missing variable — it expands to an empty string, so a fresh clone starts
+        # with blank credentials and fails somewhere much later.
+        run: |
+          MISSING=0
+          # Single-$ references only. $${VAR} is escaped on purpose: it is resolved
+          # by the shell inside the container, not by compose.
+          VARS="$(grep -oE '(^|[^$])\$\{[A-Z_][A-Z0-9_]*\}' docker/docker-compose.yml \
+                  | grep -oE '[A-Z_][A-Z0-9_]*' | sort -u)"
+          for v in $VARS; do
+            if grep -qE "^${v}=" .env.example; then
+              echo "  ok       $v"
+            else
+              echo "  MISSING  $v  (referenced in docker-compose.yml)"
+              MISSING=1
+            fi
+          done
+          exit $MISSING
+
+      - name: Validate the compose file
+        # An invalid compose file breaks every `make` target at once, and the error
+        # (a service nested one level too deep) is easy to miss by eye.
+        run: docker compose -f docker/docker-compose.yml --env-file .env config --quiet
+
+      - name: Validate Prometheus config and alert rules
+        # Mounted at /etc/prometheus, NOT an arbitrary path. prometheus.yml refers to
+        # its rules as /etc/prometheus/alerts.yml — the path inside the real container
+        # — so mounting anywhere else makes `check config` fail with "does not point
+        # to an existing file" even though both files are perfectly valid. Same files,
+        # different mount point, different answer.
+        #
+        # One command covers both: check config follows rule_files and validates the
+        # rules it finds, which also proves the reference itself resolves.
+        run: |
+          docker run --rm -v "$PWD/docker/prometheus:/etc/prometheus:ro" \
+            --entrypoint promtool prom/prometheus:v3.13.3 \
+            check config /etc/prometheus/prometheus.yml
+
+  image:
+    name: Build and boot
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        # The same image and major version as production. A smoke test against plain
+        # postgres would pass while pgvector was missing.
+        image: pgvector/pgvector:0.8.6-pg18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: customer_support
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d customer_support"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          # Loaded into the local daemon rather than pushed: there is no registry
+          # target yet, and the point of this job is to run it, not to ship it.
+          load: true
+          push: false
+          tags: |
+            customer-support:${{ github.sha }}
+            customer-support:ci
+          # Lineage: the commit is recorded on the image, so "which code is this?"
+          # is answerable from the image alone rather than from a deploy log.
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Boot it
+        # This exercises the entrypoint: wait for Postgres, clear the Prometheus
+        # multiprocess directory, run `alembic upgrade head`, then start uvicorn with
+        # its workers. A dummy GROQ_API_KEY is enough — Settings requires the key to
+        # exist, and nothing on this path calls the provider.
+        #
+        # --env-file .env.example, then -e overrides. Settings has 13 required fields
+        # and the image deliberately carries no .env (.dockerignore excludes it), so
+        # enumerating a handful of -e flags leaves the app dead at import. Sourcing
+        # the example also makes this step assert something worth asserting: that the
+        # file a new contributor is told to copy is sufficient to run the service.
+        # Docker applies -e after --env-file, so the connection overrides still win.
+        run: |
+          docker run -d --name app --network host \
+            --env-file .env.example \
+            -e POSTGRES_USERNAME=postgres \
+            -e POSTGRES_PASSWORD=postgres \
+            -e POSTGRES_HOST=127.0.0.1 \
+            -e POSTGRES_PORT=5432 \
+            -e POSTGRES_MAIN_DATABASE=customer_support \
+            -e GROQ_API_KEY=ci-not-a-real-key \
+            -e COHERE_API_KEY=ci-not-a-real-key \
+            -e LOG_JSON=true \
+            customer-support:ci
+
+          for i in $(seq 1 40); do
+            if curl -fsS localhost:8000/ >/dev/null 2>&1; then
+              echo "up after ${i} attempt(s)"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::the container never answered on :8000"
+          docker logs app
+          exit 1
+
+      - name: Migrations actually ran
+        # The entrypoint runs alembic before uvicorn. If it silently failed, the app
+        # would still serve `/` — so assert the schema exists rather than trusting
+        # that the process started.
+        run: |
+          # -i is essential. Without stdin attached the heredoc goes nowhere,
+          # python exits 0 having executed nothing, and this step PASSES while
+          # asserting nothing at all — the exact shape of a check that cannot fail.
+          docker exec -i app python - <<'PY'
+          import os, psycopg
+          dsn = (f"postgresql://{os.environ['POSTGRES_USERNAME']}:{os.environ['POSTGRES_PASSWORD']}"
+                 f"@{os.environ['POSTGRES_HOST']}:{os.environ['POSTGRES_PORT']}"
+                 f"/{os.environ['POSTGRES_MAIN_DATABASE']}")
+          with psycopg.connect(dsn) as conn:
+              rows = conn.execute(
+                  "select tablename from pg_tables where schemaname='public' order by 1"
+              ).fetchall()
+          tables = {r[0] for r in rows}
+          print("tables:", sorted(tables))
+          required = {"tickets", "ticket_status_history", "alembic_version"}
+          missing = required - tables
+          assert not missing, f"migrations did not create: {missing}"
+          print("migrations OK")
+          PY
+
+      - name: The instrumentation is wired
+        # Asserts the metrics endpoint serves, and that labels are keyed on the route
+        # TEMPLATE rather than the request path. Hitting three different ids must
+        # produce ONE series; the naive implementation produces three and grows
+        # without bound until Prometheus runs out of memory.
+        run: |
+          for id in 1 2 3; do curl -fsS "localhost:8000/api/v1/escalation/tickets/$id" >/dev/null || true; done
+          sleep 2
+          BODY="$(curl -fsS localhost:8000/TrhBVe)"
+
+          echo "$BODY" | grep -q 'customer_support_requests_total' \
+            || { echo "::error::request counter missing"; exit 1; }
+
+          SERIES="$(echo "$BODY" | grep -c 'endpoint="/api/v1/escalation/tickets/{ticket_id}"' || true)"
+          echo "series for the parameterised route: $SERIES"
+          [ "$SERIES" -ge 1 ] || { echo "::error::route-template label missing"; exit 1; }
+
+          if echo "$BODY" | grep -qE 'endpoint="/api/v1/escalation/tickets/[0-9]+"'; then
+            echo "::error::labels contain raw ids — cardinality is unbounded"
+            exit 1
+          fi
+          echo "metrics OK: labels are bounded"
+
+      - name: Container logs
+        if: always()
+        run: docker logs app 2>&1 | tail -60

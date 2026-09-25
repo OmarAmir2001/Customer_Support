@@ -1,0 +1,82 @@
+# The same gates CI runs, on the same files, run locally before the commit exists.
+#
+# `pre-commit` was already a dev dependency but had no config, so nothing ran. The
+# point is not to duplicate CI — it is to fail in two seconds on your machine rather
+# than two minutes on a runner, for the class of problem that is always a formatting
+# nit or an unsorted import.
+#
+#   uv run --extra dev pre-commit install          # once, to enable it
+#   uv run --extra dev pre-commit run --all-files
+#
+# SCOPE MATTERS HERE. The first version of this file ran on every file in the repo,
+# and it did real damage on its first run: the trailing-whitespace hook stripped
+# markdown hard line breaks out of 66 lines of the Arabic handbook. Two trailing
+# spaces are SIGNIFICANT in markdown, and those files are the ingestion source of
+# truth — the text that gets chunked and embedded. It also reformatted applied
+# Alembic migrations, which are append-only history, and rewrote the LICENSE.
+#
+# So the linters are scoped to src/ and tests/ exactly as CI is, and the whitespace
+# hooks exclude content, data and vendored text. A hook that edits files CI never
+# checks is not a safety net; it is an unreviewed commit.
+#
+# Deliberately NOT included: the test suite. It takes ~2s today, but a hook that runs
+# tests gets bypassed with --no-verify the first time it is slow, and a hook people
+# routinely skip is worse than no hook. CI is where tests belong.
+
+exclude: |
+  (?x)^(
+      data/.*             |   # handbooks: markdown line breaks are meaningful
+      handbook/.*         |   # the original scanned PDFs
+      assets/.*           |
+      migrations/versions/.*  |   # applied migrations are history, not live code
+      LICENSE             |
+      .*\.lock
+  )$
+
+repos:
+  # ruff runs from the PROJECT's own environment, not from a pinned mirror rev.
+  #
+  # The mirror was the first approach and it drifted immediately: pyproject declares
+  # `ruff>=0.12`, uv resolved 0.16.7, and pinning the hook to v0.12.0 meant the hook
+  # enforced UP038 — a rule newer ruff dropped — and failed a file that `ruff check`
+  # and CI both pass. A linter that disagrees with CI is worse than no linter, because
+  # the fix it demands is the thing CI will not ask for.
+  #
+  # `language: system` with `uv run` guarantees the hook, the Makefile and CI are all
+  # the same binary, so there is one version to bump instead of two to keep in step.
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: lint (ruff, project version)
+        entry: uv run --extra dev ruff check --fix
+        language: system
+        types: [python]
+        files: ^(src|tests)/
+        require_serial: true
+
+      - id: ruff-format
+        name: format (ruff, project version)
+        entry: uv run --extra dev ruff format
+        language: system
+        types: [python]
+        files: ^(src|tests)/
+        require_serial: true
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: end-of-file-fixer
+        # The single most common reason a file failed `ruff format --check` here.
+      - id: trailing-whitespace
+        # Markdown is excluded even outside data/: two trailing spaces are a hard
+        # line break, and silently deleting them changes how a document renders.
+        exclude_types: [markdown]
+      - id: check-yaml
+        # The compose file had a service nested one level too deep and it was not
+        # obvious by eye. Structural YAML errors should not reach a runner.
+        args: [--allow-multiple-documents]
+      - id: check-added-large-files
+        args: [--maxkb=2048]
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: check-toml

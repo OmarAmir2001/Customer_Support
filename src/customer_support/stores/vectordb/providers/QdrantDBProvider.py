@@ -10,9 +10,14 @@ from ..VectorDBInterface import VectorDBInterface
 
 
 class QdrantDBProvider(VectorDBInterface):
-    def __init__(self , db_client,default_vector_size:int=786,
-                    distance_method:str= None, index_threshold:int=10000):
-        self.client=None
+    def __init__(
+        self,
+        db_client,
+        default_vector_size: int = 786,
+        distance_method: str = None,
+        index_threshold: int = 10000,
+    ):
+        self.client = None
         self.db_client = db_client
         self.distance_method = distance_method
 
@@ -30,17 +35,16 @@ class QdrantDBProvider(VectorDBInterface):
     async def disconnect(self):
         self.client.close()
 
-    async def is_collection_exists(self, collection_name:str)-> bool:
+    async def is_collection_exists(self, collection_name: str) -> bool:
         return self.client.collection_exists(collection_name=collection_name)
 
-    async def list_all_collections(self)-> list:
+    async def list_all_collections(self) -> list:
         return self.client.get_collections()
 
-    async def get_collection_info(self,collection_name:str) -> dict:
+    async def get_collection_info(self, collection_name: str) -> dict:
         return self.client.get_collection(collection_name=collection_name)
 
-    async def delete_collection(self,collection_name:str):
-
+    async def delete_collection(self, collection_name: str):
         if self.is_collection_exists(collection_name=collection_name):
             return self.client.delete_collection(collection_name=collection_name)
         else:
@@ -49,35 +53,46 @@ class QdrantDBProvider(VectorDBInterface):
             )
             return False
 
-    async def create_collection(self,collection_name:str,
-                              embedding_size:int,
-                              do_reset:bool=False):
-
+    async def create_collection(
+        self, collection_name: str, embedding_size: int, do_reset: bool = False
+    ):
         if do_reset:
-           _= self.delete_collection(collection_name=collection_name)
+            _ = self.delete_collection(collection_name=collection_name)
 
         if not self.is_collection_exists(collection_name=collection_name):
-            _= self.client.create_collection(
+            _ = self.client.create_collection(
                 collection_name=collection_name,
-                vectors_config=models.VectorParams(size=embedding_size,
-                                                distance=self.distance_method))
+                vectors_config=models.VectorParams(
+                    size=embedding_size, distance=self.distance_method
+                ),
+            )
             return True
         return False
 
-    async def insert_one(self, collection_name:str, text:str ,vector: list,
-                        metadata:dict=None, record_id:str=None):
-        
+    async def insert_one(
+        self,
+        collection_name: str,
+        text: str,
+        vector: list,
+        metadata: dict = None,
+        record_id: str = None,
+    ):
         if not self.is_collection_exists(collection_name=collection_name):
             self.logger.error(
                 "collection_missing", collection=collection_name, operation="insert_one"
             )
             return False
         if record_id is None:
-                record_id = uuid.uuid4().hex
+            record_id = uuid.uuid4().hex
         try:
-            _= self.client.upload_record(
+            _ = self.client.upload_record(
                 collection_name=collection_name,
-                records=[models.Record(id=[record_id],vector=vector,payload={"text":text,"metadata":metadata})])
+                records=[
+                    models.Record(
+                        id=[record_id], vector=vector, payload={"text": text, "metadata": metadata}
+                    )
+                ],
+            )
         except Exception as e:
             self.logger.error(
                 "qdrant_insert_failed",
@@ -88,12 +103,19 @@ class QdrantDBProvider(VectorDBInterface):
             )
             return False
 
-    async def insert_many( self, collection_name:str , texts:list[str],vectors:list[str]
-                    , metadata: list[dict]=None, record_ids:list[str]=None , batch_size:int=50):
+    async def insert_many(
+        self,
+        collection_name: str,
+        texts: list[str],
+        vectors: list[str],
+        metadata: list[dict] = None,
+        record_ids: list[str] = None,
+        batch_size: int = 50,
+    ):
         if metadata is None:
-            metadata = [None]*len(texts)
+            metadata = [None] * len(texts)
         if record_ids is None:
-            record_ids = list(range(0,len(texts)))
+            record_ids = list(range(0, len(texts)))
 
         if not self.is_collection_exists(collection_name=collection_name):
             self.logger.error(
@@ -101,23 +123,24 @@ class QdrantDBProvider(VectorDBInterface):
             )
             return False
 
-        for i in range(0,len(texts),batch_size):
-            batch_end = i+batch_size
-            batch_texts= texts[i:batch_end]
-            batch_vectors= vectors[i:batch_end]
-            batch_metadata= metadata[i:batch_end]
-            batch_record_ids= record_ids[i:batch_end]
+        for i in range(0, len(texts), batch_size):
+            batch_end = i + batch_size
+            batch_texts = texts[i:batch_end]
+            batch_vectors = vectors[i:batch_end]
+            batch_metadata = metadata[i:batch_end]
+            batch_record_ids = record_ids[i:batch_end]
             batch_points = [
-                models.PointStruct(id=batch_record_ids[x],
-                                   vector=batch_vectors[x],
-                                   payload={"text": batch_texts[x], "metadata": batch_metadata[x]})
+                models.PointStruct(
+                    id=batch_record_ids[x],
+                    vector=batch_vectors[x],
+                    payload={"text": batch_texts[x], "metadata": batch_metadata[x]},
+                )
                 for x in range(len(batch_texts))
             ]
             try:
                 _ = self.client.upsert(
-                    collection_name=collection_name,
-                    points=batch_points,
-                    wait=True)
+                    collection_name=collection_name, points=batch_points, wait=True
+                )
             except Exception as e:
                 self.logger.error(
                     "qdrant_insert_failed",
@@ -163,30 +186,22 @@ class QdrantDBProvider(VectorDBInterface):
         self.client.delete(collection_name=collection_name, points_selector=selector)
         return matched
 
-    async def search_by_vector(self, collection_name:str, vector: list,limit:int = 10):
-
+    async def search_by_vector(self, collection_name: str, vector: list, limit: int = 10):
         result = self.client.query_points(
-        collection_name=collection_name,
-        query=vector,
-        limit=limit,
-    )
+            collection_name=collection_name,
+            query=vector,
+            limit=limit,
+        )
         if not result or len(result.points) == 0:
             return False
 
-        return [RetrievedDocument(**{
-                "text":record.payload["text"],
-                "score":record.score,
-                "metadata":record.payload["metadata"]
-                                  })
-                for record in result.points
-                ]
-
-    
-            
-
-        
-
-
-        
-
-
+        return [
+            RetrievedDocument(
+                **{
+                    "text": record.payload["text"],
+                    "score": record.score,
+                    "metadata": record.payload["metadata"],
+                }
+            )
+            for record in result.points
+        ]

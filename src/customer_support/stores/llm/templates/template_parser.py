@@ -99,9 +99,7 @@ class TemplateParser:
         for candidate in candidates:
             if candidate and candidate in supported:
                 if requested and candidate != requested:
-                    logger.warning(
-                        "locale_fallback", requested=requested, resolved=candidate
-                    )
+                    logger.warning("locale_fallback", requested=requested, resolved=candidate)
                 return candidate
 
         # Nothing matched — including the configured default. That is a deployment
@@ -139,7 +137,9 @@ class TemplateParser:
         module = _load_group(resolved, group)
         if module is None and resolved != self.default_language:
             logger.warning(
-                "locale_group_missing", language=resolved, group=group,
+                "locale_group_missing",
+                language=resolved,
+                group=group,
                 falling_back_to=self.default_language,
             )
             resolved = self.default_language
@@ -159,7 +159,10 @@ class TemplateParser:
             # defect in the locale file rather than something to paper over.
             logger.error(
                 "locale_key_not_a_template",
-                group=group, key=key, language=resolved, actual_type=type(template).__name__,
+                group=group,
+                key=key,
+                language=resolved,
+                actual_type=type(template).__name__,
             )
             return None
 

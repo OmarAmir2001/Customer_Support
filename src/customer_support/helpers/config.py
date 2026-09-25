@@ -33,7 +33,13 @@ class Settings(BaseSettings):
     OPENAI_API_URL: str | None = None
     COHERE_API_KEY: str | None = None
 
-    GENERATION_MODEL_ID_LITERAL:list[str] = None
+    # Documentation only — nothing reads these; they record which values the
+    # setting above accepts. The default was `None`, which is not a valid list[str],
+    # so each was effectively REQUIRED while declared optional. GENERATION_MODEL_ID_
+    # LITERAL was also absent from .env.example, so a fresh clone could not boot the
+    # app at all — and the error said "Input should be a valid list" rather than
+    # "Field required", pointing at the type instead of the missing line.
+    GENERATION_MODEL_ID_LITERAL: list[str] = []
     GENERATION_MODEL_ID: str | None = None
     EMBEDDING_MODEL_ID: str | None = None
     EMBEDDING_MODEL_SIZE: int | None = None
@@ -42,7 +48,7 @@ class Settings(BaseSettings):
     GENERATION_DEFAULT_TEMPERATURE: float | None = None
 
     # --- vector DB ---
-    VECTOR_DB_BACKEND_LITERAL:list[str] = None
+    VECTOR_DB_BACKEND_LITERAL: list[str] = []
     VECTOR_DB_BACKEND: str
     VECTOR_DB_PATH: str
     VECTOR_DB_DISTANCE_METHOD: str | None = None
@@ -51,7 +57,7 @@ class Settings(BaseSettings):
     # EMBEDDING_MODEL_SIZE, or inserts fail against the vector(N) column.
     VECTOR_DB_DEFAULT_VECTOR_SIZE: int = 384
 
-     # --- logging ---
+    # --- logging ---
     LOG_LEVEL: str = "INFO"
     LOG_JSON: bool = True
 
@@ -101,11 +107,11 @@ class Settings(BaseSettings):
     GATE_FAITHFULNESS_THRESHOLD: float = 0.8
     GATE_ANSWER_RELEVANCE_THRESHOLD: float = 0.7
 
-    JUDGE_MODEL_ID: str | None = None      # falls back to GENERATION_MODEL_ID
+    JUDGE_MODEL_ID: str | None = None  # falls back to GENERATION_MODEL_ID
     # Reasoning models spend tokens before emitting the JSON; too low a budget
     # truncates the object and the whole verdict is rejected.
     JUDGE_MAX_OUTPUT_TOKENS: int = 1200
-    JUDGE_TEMPERATURE: float = 0.0         # a judge must be reproducible, not creative
+    JUDGE_TEMPERATURE: float = 0.0  # a judge must be reproducible, not creative
 
     # --- promotion (Section 5) ---
     # Generalizability only moves a checkbox, so it can afford to be generous:

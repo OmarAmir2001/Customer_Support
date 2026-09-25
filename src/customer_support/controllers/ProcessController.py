@@ -73,7 +73,8 @@ class ProcessController(BaseController):
         """
         Get the file extension of the specified file in the project directory.
         """
-        return os.path.splitext(file_id)[-1] # Returns the file extension without the dot
+        return os.path.splitext(file_id)[-1]  # Returns the file extension without the dot
+
     def get_file_loader(self, file_id: str):
         """
         Get the appropriate file loader based on the file extension.
@@ -85,13 +86,13 @@ class ProcessController(BaseController):
             return None
 
         if file_ext == ProcessingEnum.TXT.value:
-            return TextLoader(file_path, encoding='utf-8')
+            return TextLoader(file_path, encoding="utf-8")
         if file_ext == ProcessingEnum.PDF.value:
             return PyMuPDFLoader(file_path)
         if file_ext == ProcessingEnum.MD.value:
-            return TextLoader(file_path,encoding='utf-8')
+            return TextLoader(file_path, encoding="utf-8")
         return None
-    
+
     def get_file_content(self, file_id: str):
         """
         Get the content of the specified file in the project directory.
@@ -99,8 +100,9 @@ class ProcessController(BaseController):
         loader = self.get_file_loader(file_id=file_id)
         return loader.load() if loader else None
 
-    def process_file_content(self,file_content:list,
-                               file_id:str, chunk_size:int=1000, overlap:int=50):
+    def process_file_content(
+        self, file_content: list, file_id: str, chunk_size: int = 1000, overlap: int = 50
+    ):
         """
         Process the content of the specified file in the project directory.
 
@@ -137,8 +139,9 @@ class ProcessController(BaseController):
 
         return chunks
 
-    def _chunk_markdown(self, file_content: list, file_id: str,
-                        chunk_size: int = 1000, overlap: int = 50):
+    def _chunk_markdown(
+        self, file_content: list, file_id: str, chunk_size: int = 1000, overlap: int = 50
+    ):
         """Split on headings, then sub-split only the sections that are too long.
 
         Headings alone are not enough: one section of a regulations handbook can run
@@ -191,8 +194,7 @@ class ProcessController(BaseController):
         parts = [header_metadata.get(key) for _, key in HEADERS_TO_SPLIT_ON]
         return " > ".join(part for part in parts if part) or "(untitled)"
 
-
-    def process_json_content(self,file_id:str):
+    def process_json_content(self, file_id: str):
         """
         Load a pre-chunked JSON handbook (list of {text, source, section}).
         Skips extraction + splitting — the chunks are already made.
@@ -201,28 +203,21 @@ class ProcessController(BaseController):
         file_path = os.path.join(self.project_path, file_id)
         if not os.path.exists(file_path):
             return None
-        with open(file_path, encoding='utf-8') as f:
+        with open(file_path, encoding="utf-8") as f:
             raw_chunks = json.load(f)
 
         documents = []
-        for i,chunk in enumerate(raw_chunks):
+        for i, chunk in enumerate(raw_chunks):
             if "text" not in chunk:
-                self.logger.error(
-                    "json_chunk_missing_text", file_id=file_id, chunk_index=i
-                )
+                self.logger.error("json_chunk_missing_text", file_id=file_id, chunk_index=i)
                 return None
-            documents.append(Document(page_content=chunk["text"],
-                                      metadata=self._chunk_metadata(
-                                          chunk.get("source") or file_id,
-                                          {
-                                              "source":chunk.get("source"),
-                                              "section":chunk.get("section")
-                                          },
-                                      )))
+            documents.append(
+                Document(
+                    page_content=chunk["text"],
+                    metadata=self._chunk_metadata(
+                        chunk.get("source") or file_id,
+                        {"source": chunk.get("source"), "section": chunk.get("section")},
+                    ),
+                )
+            )
         return documents
-            
-
-
-        
-        
-        

@@ -93,7 +93,8 @@ class ReadOnlyUser(HttpUser):
         # Seed from tickets that already exist, so thread reads hit real checkpoints
         # instead of 404ing and flattering the latency numbers.
         with self.client.get(
-            "/api/v1/escalation/tickets?page_size=20", name="/escalation/tickets [seed]",
+            "/api/v1/escalation/tickets?page_size=20",
+            name="/escalation/tickets [seed]",
             catch_response=True,
         ) as response:
             if response.status_code == 200:

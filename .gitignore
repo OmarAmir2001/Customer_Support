@@ -135,7 +135,19 @@ __marimo__/
 
 # Temp
 tempCodeRunnerFile.py
+# --- editors and OS cruft ---
+# .vscode/settings.json was tracked until now. Its contents were personal prefs (a
+# language-server choice, a Postman notification toggle) — nothing a collaborator
+# needs, and the kind of file that produces merge conflicts over nobody's setting.
+# Un-ignore a specific file (e.g. !.vscode/extensions.json) if shared config is ever
+# genuinely wanted.
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 .DS_Store
+Thumbs.db
 lab
 /assets/
 alembic.ini

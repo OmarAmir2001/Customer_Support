@@ -9,7 +9,7 @@ from .BaseController import BaseController
 
 
 class KBController(BaseController):
-    def __init__(self,vectordb_client,generation_client,embedding_client):
+    def __init__(self, vectordb_client, generation_client, embedding_client):
         super().__init__()
 
         self.vectordb_client = vectordb_client
@@ -17,26 +17,30 @@ class KBController(BaseController):
         self.embedding_client = embedding_client
         self.logger = get_logger(__name__)
 
-
-    def create_collection_name(self,project_id:str):
+    def create_collection_name(self, project_id: str):
         return f"collection_{project_id}".strip()
 
-    async def reset_vectordb_collection(self,project:Project):
+    async def reset_vectordb_collection(self, project: Project):
         collection_name = self.create_collection_name(project_id=project.project_id)
         return await self.vectordb_client.delete_collection(collection_name=collection_name)
 
-    async def get_vector_db_collection_info(self,project:Project):
+    async def get_vector_db_collection_info(self, project: Project):
         collection_name = self.create_collection_name(project_id=project.project_id)
         collection_info = await self.vectordb_client.get_collection_info(
-            collection_name=collection_name)
+            collection_name=collection_name
+        )
 
         # The await belongs on the provider call, not on json.loads: awaiting a dict
         # raises TypeError, which is what made this endpoint a guaranteed 500.
         return json.loads(json.dumps(collection_info, default=lambda o: o.__dict__))
 
-    async def index_into_vector_db(self, project:Project, chunks:list[DataChunk],
-                                   chunks_ids:list[int], do_reset:bool=False):
-
+    async def index_into_vector_db(
+        self,
+        project: Project,
+        chunks: list[DataChunk],
+        chunks_ids: list[int],
+        do_reset: bool = False,
+    ):
         # step 1: get collection name
         collection_name = self.create_collection_name(project_id=project.project_id)
 
@@ -44,8 +48,8 @@ class KBController(BaseController):
         texts = [chunk.chunk_text for chunk in chunks]
         metadatas = [chunk.chunk_metadata for chunk in chunks]
         vectors = self.embedding_client.embed_text(
-                                    text=texts,
-                                    document_type=DocumentTypeEnum.DOCUMENT.value)
+            text=texts, document_type=DocumentTypeEnum.DOCUMENT.value
+        )
         self.logger.info(
             "kb_embedding_complete",
             collection=collection_name,
@@ -62,16 +66,20 @@ class KBController(BaseController):
             return False
 
         # step 3: create the collection if it doesn't exist
-        _ = await self.vectordb_client.create_collection(collection_name=collection_name,
-                                                   embedding_size=self.embedding_client.embedding_size,
-                                                   do_reset=do_reset)
+        _ = await self.vectordb_client.create_collection(
+            collection_name=collection_name,
+            embedding_size=self.embedding_client.embedding_size,
+            do_reset=do_reset,
+        )
 
         # step 4: insert the data into the collection
-        _ = await self.vectordb_client.insert_many(collection_name=collection_name,
-                                             texts=texts,
-                                             vectors=vectors,
-                                             metadata=metadatas,
-                                             record_ids=chunks_ids)
+        _ = await self.vectordb_client.insert_many(
+            collection_name=collection_name,
+            texts=texts,
+            vectors=vectors,
+            metadata=metadatas,
+            record_ids=chunks_ids,
+        )
         return True
 
     async def _embed_in_batches(self, texts: list[str], batch_size: int = 96):
@@ -107,8 +115,13 @@ class KBController(BaseController):
 
         return vectors
 
-    async def sync_sections(self, project: Project, chunks: list[DataChunk],
-                            chunks_ids: list[int], do_reset: bool = False):
+    async def sync_sections(
+        self,
+        project: Project,
+        chunks: list[DataChunk],
+        chunks_ids: list[int],
+        do_reset: bool = False,
+    ):
         """Section 1's handbook sync: delete-then-insert, keyed on source + section.
 
         ``index_into_vector_db`` only ever INSERTS, so re-running it after a handbook
@@ -144,7 +157,8 @@ class KBController(BaseController):
         all_vectors = await self._embed_in_batches([chunk.chunk_text for chunk in chunks])
         if all_vectors is None:
             self.logger.error(
-                "section_sync_embedding_failed", collection=collection_name,
+                "section_sync_embedding_failed",
+                collection=collection_name,
                 text_count=len(chunks),
             )
             return False
@@ -155,9 +169,7 @@ class KBController(BaseController):
         for chunk, chunk_id, vector in zip(chunks, chunks_ids, all_vectors, strict=True):
             metadata = chunk.chunk_metadata or {}
             key = (metadata.get("source"), metadata.get("section"))
-            group = groups.setdefault(
-                key, {"texts": [], "metadatas": [], "ids": [], "vectors": []}
-            )
+            group = groups.setdefault(key, {"texts": [], "metadatas": [], "ids": [], "vectors": []})
             group["texts"].append(chunk.chunk_text)
             group["metadatas"].append(metadata)
             group["ids"].append(chunk_id)
@@ -218,5 +230,4 @@ class KBController(BaseController):
     #     if not results or len(results) == 0:
     #         return False
 
-        
     #     return json.loads(json.dumps(results, default=lambda o: o.__dict__))
