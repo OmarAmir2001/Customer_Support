@@ -1,8 +1,16 @@
 # 🎧 Handbook Assistant — Higher Institute Customer Support Agent
 
+[![CI](https://github.com/OmarAmir2001/Customer_Support/actions/workflows/ci.yml/badge.svg)](https://github.com/OmarAmir2001/Customer_Support/actions/workflows/ci.yml)
+[![Python 3.13](https://img.shields.io/badge/python-3.13-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-stateful%20agent-1C3C3C)](https://langchain-ai.github.io/langgraph/)
+[![Postgres + pgvector](https://img.shields.io/badge/Postgres-pgvector-4169E1?logo=postgresql&logoColor=white)](https://github.com/pgvector/pgvector)
+[![Prometheus + Grafana](https://img.shields.io/badge/Prometheus-Grafana-E6522C?logo=prometheus&logoColor=white)](https://prometheus.io/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 > An AI agent that answers student questions from the CS and IS department handbooks, escalates the ones it cannot answer confidently to a human advisor, and learns from resolved escalations — through a human-gated promotion step, not automatically.
 
-**Status:** 🟢 Core loop, long-term memory and the promotion gate working end to end. The advisor UI is not built yet — see [Roadmap](#roadmap).
+**Status:** 🟢 The whole loop runs end to end — retrieval, three orthogonal judge gates, escalation to a human, resolution delivered back into the same conversation, and human-gated promotion into the knowledge base. Dockerised, instrumented with Prometheus and Grafana, 115 tests in CI.
 
 ---
 
@@ -318,7 +326,7 @@ No database, no API keys, no graph — the gates, the ticket state machine and t
 | `POST` | `/api/v1/admin/knowledge_base/search/{project_id}` | Debug retrieval exactly as the agent sees it      |
 | `GET`  | `/api/v1/admin/index_info/info/{project_id}`     | Collection stats                                    |
 
-`/api/v1/profile/{student_id}` returns what long-term memory knows about a student, and `DELETE` on it wipes that profile (privacy and reset requests). Conversation history is read per thread from `GET /api/v1/chat/{thread_id}`; there is no per-student history endpoint yet — see the roadmap.
+`/api/v1/profile/{student_id}` returns what long-term memory knows about a student, and `DELETE` on it wipes that profile (privacy and reset requests). Conversation history is read per thread from `GET /api/v1/chat/{thread_id}`, keyed by `thread_id` exactly as the checkpointer stores it.
 
 Every transition the state machine permits is now reachable over HTTP, `duplicate` excepted — nothing should be able to park a ticket in a terminal state by hand until duplicate detection exists to justify it. A lifecycle call answers `404` for a missing ticket, `409` for a move the ticket's state refuses *or* for losing a race to another advisor, and `400` for a broken invariant such as a reason-less rejection.
 
