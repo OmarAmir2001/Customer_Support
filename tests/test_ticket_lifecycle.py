@@ -74,6 +74,15 @@ class FakeEmbedding:
         return [[0.1, 0.2, 0.3]]
 
 
+class FakeSettings:
+    """EscalationController reads no settings of its own — but BaseController's
+    __init__ needs ASSETS_DIR to build its paths, so omitting this falls back to real
+    Settings, which reads .env. That made these tests pass on a machine with a .env
+    and fail in CI, which is exactly backwards from what a unit test should do."""
+
+    ASSETS_DIR = "assets"
+
+
 def controller(ticket):
     model = FakeTicketModel(ticket)
     vectordb = FakeVectorDB()
@@ -82,6 +91,7 @@ def controller(ticket):
         vectordb_client=vectordb,
         embedding_client=FakeEmbedding(),
         collection_name="collection_3",
+        settings=FakeSettings(),
     )
     return ctrl, model, vectordb
 
