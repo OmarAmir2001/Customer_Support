@@ -9,6 +9,7 @@ from customer_support.helpers.locale import negotiate_language
 from customer_support.helpers.logging_config import get_logger, set_correlation_id
 from customer_support.models.graph.conversation import ConversationMessage
 from customer_support.routers.schemas.chat import ChatRequest, ChatResponse
+from customer_support.utils.metrics import record_question
 
 logger = get_logger(__name__)
 
@@ -98,6 +99,15 @@ async def chat(
     # is added without being reset above — whereas an id that is only ever written on
     # the escalate path is not.
     escalated = bool(final_state.get("escalate"))
+
+    # The one place every question's outcome is known. Recorded here rather than in a
+    # node because a run can leave the graph by more than one path, and an escalation
+    # rate built from a counter that misses a path is worse than none.
+    record_question(
+        outcome="escalated" if escalated else "answered",
+        failed_gate=final_state.get("failed_gate"),
+        department=payload.department,
+    )
 
     # Off the critical path: BackgroundTasks runs after the response is sent, so
     # the student never waits on extraction. MemoryController gates itself — most

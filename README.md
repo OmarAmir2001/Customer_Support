@@ -105,7 +105,10 @@ Verified end to end against real Postgres and live model calls:
 - ✅ **Human-gated promotion judges** — a generalizability check sets the advisor's checkbox default, and a contradiction check *holds* promotion and flags the handbook for review. Deliberately asymmetric: only the contradiction check can block, because a wrong generalizability call would silently discard good knowledge while a wrong hold is merely visible. Both fail safe, in opposite directions.
 - ✅ **Section-aware chunking** — markdown splits on its own headings, so a chunk's `section` is a real citable path (`... > أحكام وشروط الدراسة > مادة (١٠)`) rather than a character offset.
 - ✅ **Idempotent handbook re-ingest** — `sync_sections` delete-then-inserts per `(source, section)`, so pushing twice replaces rather than duplicates, with no full collection rebuild.
-- ✅ **One-command Docker setup** via `make up`, a Locust load profile, and 108 passing tests that need no database.
+- ✅ **One-command Docker setup** via `make up`, a Locust load profile, and 115 passing tests that need no database.
+- ✅ **Metrics that stay bounded** — Prometheus + Grafana, with request labels keyed on the *route template*. `/api/v1/chat/{thread_id}` is one series; labelling by raw path would mint a permanent series per conversation UUID and grow until Prometheus runs out of memory. Counters are recorded in a `finally`, so unhandled exceptions appear in the error rate instead of vanishing, and the registry is multiprocess-aware because uvicorn runs several workers.
+- ✅ **Metrics that describe *this* system, not a generic web app** — `customer_support_questions_total{outcome,failed_gate,department}` and `customer_support_judge_failures_total{gate}`. The second is the one that matters: because the judges fail closed, a degrading model provider escalates every question while `/chat` keeps returning `200` with normal latency and zero errors. A fail-closed judge produces the *same* gate reason as a genuine low score, so that counter is the only thing in the system that can tell "the provider is down" from "retrieval is bad" — and those need opposite responses.
+- ✅ **Alerts with structural thresholds** — seven rules, validated by `promtool`. Most are derived from something the system guarantees (a healthy judge never fails; `max_connections` is 100; a target is up or it is not) rather than from a traffic baseline that does not exist yet.
 
 ---
 
@@ -123,8 +126,10 @@ Verified end to end against real Postgres and live model calls:
 | Validation              | Pydantic v2 + pydantic-settings                           |
 | API layer               | FastAPI                                                   |
 | Logging                 | structlog (JSON, correlation ids)                         |
+| Metrics                 | prometheus-client → Prometheus → Grafana                  |
+| Reverse proxy           | nginx (the only service bound to `0.0.0.0`)               |
 | Packaging               | uv · Python 3.13                                          |
-| Local orchestration     | Docker Compose                                            |
+| Local orchestration     | Docker Compose · `make`                                   |
 
 **One database, three drivers.** The app talks to Postgres over **asyncpg**, LangGraph's `AsyncPostgresSaver` over **psycopg 3**, and Alembic over **psycopg2**. All three URLs are built from the same `Settings` object, so they cannot drift.
 
@@ -167,7 +172,69 @@ cp .env.example .env
 make up          # or: make rebuild to build first
 ```
 
-That starts Postgres with pgvector, waits for it to accept connections, applies migrations, and serves the API on <http://127.0.0.1:8000> (docs at `/docs`). `POSTGRES_HOST` is overridden to the `pgvector` service name inside the network, so the same `.env` works on the host and in the container. `make help` lists the rest.
+That starts Postgres with pgvector, waits for it to accept connections, applies migrations, and brings up the API behind nginx. `POSTGRES_HOST` is overridden to the `pgvector` service name inside the network, so the same `.env` works on the host and in the container. `make help` lists the rest — `make check` validates the compose file without starting anything, `make monitoring` prints where the dashboards are, and `make targets` shows which scrape targets Prometheus currently has up.
+
+| | | |
+|---|---|---|
+| nginx | <http://localhost> | the front door — the only port bound to `0.0.0.0` |
+| API | <http://127.0.0.1:8000> | direct, bypasses nginx. Docs at `/docs` |
+| Grafana | <http://127.0.0.1:3000> | datasource and dashboard provisioned at boot |
+| Prometheus | <http://127.0.0.1:9090> | `make targets` lists what it is scraping |
+
+### What is monitored
+
+Two of the exported metrics are specific to this system, and they exist because its
+worst failure is invisible in HTTP terms. The judges **fail closed**: if the model
+provider degrades, every question escalates while `/chat` returns `200` with normal
+latency and no errors. A request-rate panel would look perfect throughout.
+
+| Metric | Answers |
+|---|---|
+| `customer_support_questions_total{outcome,failed_gate,department}` | escalation rate, and which gate caused it |
+| `customer_support_judge_failures_total{gate}` | **is the provider degrading?** — the leading indicator |
+| `customer_support_requests_total{method,endpoint,status_code}` | traffic and errors, labelled by route template |
+| `customer_support_request_latency_seconds{method,endpoint}` | latency, including the checkpointer-bound conversation read |
+
+The judge-failure counter is the important one. A fail-closed judge returns the same
+gate reason as a judge that genuinely scored an answer low, so by the time the
+escalation reaches the ticket, the logs and the escalation count, the two are
+indistinguishable. It is incremented at the only point that still knows the
+difference — inside `_judge`, one line before the fallback verdict is built.
+
+Alerts live in `docker/prometheus/alerts.yml` and are visible at
+<http://localhost:9090/alerts>. Their thresholds are labelled **structural** (derived
+from something the system guarantees — a healthy judge never fails, `max_connections`
+is 100) or **behavioural** (derived from what normal traffic looks like). Only one is
+behavioural, and it is deliberately set at "obviously broken" rather than "unusual",
+because there is no baseline yet and a threshold guessed tight cries wolf until
+someone mutes it. **Delivery is not wired** — routing to email or Slack needs an
+Alertmanager service, which is not in the compose file.
+
+Every service has a memory limit, sized at roughly double its measured usage. Limits
+do not prevent a spike; they stop one service's spike from becoming another's outage.
+Without them the host OOM killer picks a victim by size rather than importance, and
+the largest process here is the API while the most load-bearing is Postgres.
+
+> **Grafana's password lives in its volume, not in `.env`.** The env var seeds the
+> account on the first boot of a fresh `grafana_data` volume; after that the stored
+> value wins — including a change made through the UI, which Grafana prompts for on
+> first login. So changing `.env` alone does nothing to a running install, and a
+> password changed in the browser will not match `.env`. To move both:
+>
+> ```bash
+> docker exec customer_support_grafana \
+>   grafana cli --homepath /usr/share/grafana admin reset-admin-password <new>
+> # then set GF_SECURITY_ADMIN_PASSWORD in .env so a fresh volume matches
+> ```
+>
+> The reset runs a secret migration first, so give it a second before testing.
+
+Everything except nginx is bound to loopback on purpose. Prometheus has no
+authentication of its own, node-exporter mounts the host filesystem read-only, and a
+database on `0.0.0.0` is reachable from anything that can route to the host. nginx
+also refuses the metrics path: Prometheus scrapes the app directly over the compose
+network, so `/TrhBVe` never needs a public route — and an unlisted path behind a
+catch-all `location /` is hidden from nobody.
 
 **Why `make` and not `docker compose` directly.** The compose file lives in `docker/` while the stack is built and configured from the repo root, and that needs two flags:
 
@@ -186,12 +253,19 @@ docker compose -f docker/docker-compose.yml --env-file .env up -d pgvector   # j
 cp .env.example .env               # POSTGRES_HOST=localhost
 cp alembic.ini.example alembic.ini
 
-uv sync
+uv sync --extra dev
 uv run alembic upgrade head
 uv run uvicorn customer_support.main:app --reload
 ```
 
+`--extra dev` is not optional if you want the tooling: a bare `uv sync` resolves to the
+runtime dependencies only and *removes* pytest, ruff and locust from the venv.
+
 Set `LOG_JSON=false` for coloured, human-readable logs while developing; keep JSON everywhere else.
+
+Running locally is a single process, so `PROMETHEUS_MULTIPROC_DIR` is unset and the
+default in-process registry is used. Only the container sets it, because only the
+container runs multiple workers.
 
 ### Loading the knowledge base
 
@@ -215,7 +289,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/admin/knowledge_base/push/1 \
 ### Tests
 
 ```bash
-uv run pytest tests -q --no-cov
+make test                            # or: uv run --extra dev pytest tests -q --no-cov
 ```
 
 No database, no API keys, no graph — the gates, the ticket state machine and the retrieval ranking are all pure logic by design.
@@ -278,6 +352,8 @@ src/customer_support/
     llm_schemas/             # GateResult, JudgeVerdict — parsed LLM output
   routers/                   # HTTP only: no queries, no prompts
     chat.py  escalation.py  admin.py  health.py  schemas/
+  utils/
+    metrics.py               # Prometheus: route-template labels, escalation counters
   stores/                    # external systems behind interfaces
     checkpointer.py          # LangGraph Postgres saver
     llm/                     # LLMInterface + OpenAI/Groq and Cohere providers
@@ -285,10 +361,15 @@ src/customer_support/
 migrations/                  # Alembic (ignores LangGraph's own checkpoint tables)
 data/handbooks/              # CS_2023.md, IS_2023.md — the ingestion input
 handbook/                    # the original scanned PDFs, archival source of truth
-docker/                      # Dockerfile, compose file, entrypoint
+docker/                      # Dockerfile, compose file, entrypoint, monitoring config
   Dockerfile                 # built with the REPO ROOT as context
   docker-compose.yml         # paths point up; see "Why make" above
   docker-entrypoint.sh       # waits for Postgres, migrates, then starts uvicorn
+  nginx/default.conf         # proxies the API, refuses the metrics path
+  prometheus/prometheus.yml  # scrape config: app, Postgres, host, Qdrant
+  prometheus/alerts.yml      # 7 rules; thresholds marked structural vs behavioural
+  grafana/provisioning/      # datasource + dashboard provider, applied at boot
+  grafana/dashboards/        # dashboard JSON, loaded from disk
 tests/                       # gates, transitions, ranking, locales, memory, promotion
   load/locustfile.py         # read-only and full-pipeline load profiles
 Makefile                     # wraps the compose flags so they cannot be forgotten
@@ -311,6 +392,14 @@ Makefile                     # wraps the compose flags so they cannot be forgott
 | `JUDGE_MAX_OUTPUT_TOKENS`          | `1200`  | Reasoning models spend tokens before emitting JSON; too low truncates the verdict and the whole judgement is rejected |
 | `INPUT_DEFAULT_MAX_CHARACTERS`     | `8000` in `.env.example` (unset = no truncation) | `generate_text` truncates its prompt to this — set it below the context size and the excerpts get cut out of the answer prompt |
 | `LOG_JSON`                         | `true`  | `false` for coloured local logs                                        |
+| `--workers` (Dockerfile `CMD`)     | `4`     | Each worker is a separate process with its own connection pool, thread pool and metrics. Changing it changes the connection budget below |
+| `PROMETHEUS_MULTIPROC_DIR`         | set in the image | Without it each worker reports only its own counters, so a scrape shows roughly 1/N of real traffic |
+
+**The connection budget.** Postgres' default `max_connections` is 100. Each worker
+holds `pool_size + max_overflow` (5 + 5) plus one checkpointer connection, so the
+total is `workers x 10 + workers` — 44 at the current 4. SQLAlchemy's defaults (5 +
+10) would have made that 64, and the failure mode is "too many clients" appearing
+only under the load that needs the connections most.
 
 ---
 
@@ -323,6 +412,7 @@ Makefile                     # wraps the compose flags so they cannot be forgott
 - Retrieval ranking that enforces a policy (handbook precedence) the vector store has no concept of
 - Clean controller architecture — thin nodes, logic reused by both the graph and the API, testable without either
 - Production logging: one renderer for app and library logs, correlation ids through `contextvars`
+- Instrumentation that survives contact with production: bounded label cardinality, multiprocess-safe counters, errors recorded in a `finally` so failures cannot vanish from the error rate — and metrics chosen so the system's *own* failure mode is visible, not just HTTP's
 - FastAPI + Pydantic v2, SQLAlchemy 2 async, Alembic migrations, Docker Compose, uv
 
 ---
@@ -337,6 +427,8 @@ Deferred deliberately — the core loop works without them:
 - [ ] **Duplicate detection** — match an incoming question against already-resolved tickets and auto-resolve by pointing at the existing answer.
 - [ ] **Offline evaluation** — Hit Rate / MRR on a labelled set, to calibrate the gate thresholds that are currently guessed.
 - [ ] **The UI** — a **Tailwind** front end built to existing designs (student chat + advisor dashboard). Not Gradio; earlier notes that say Gradio are superseded. The API it needs is complete: every lifecycle action has an endpoint.
+- [ ] **Alert delivery** — the rules exist and fire, but nothing routes them. Needs an Alertmanager service and a destination. Until then they are visible only at `/alerts`, which is a dashboard someone has to open.
+- [ ] **A tuned escalation threshold** — `EscalationRateHigh` is the one behavioural rule and is set at "obviously broken" (50%). Tightening it needs a week of real traffic to establish what normal looks like.
 - [ ] **Streaming responses** and a deployed demo.
 - [ ] **Domain-agnostic configuration** (deliberately deferred — see below).
 

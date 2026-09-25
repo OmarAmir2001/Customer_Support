@@ -18,7 +18,11 @@
 
 COMPOSE := docker compose -f docker/docker-compose.yml --env-file .env
 
-.PHONY: help up down build rebuild restart logs ps migrate shell db test load load-chat
+# The compose service name. Held in one place because it moved once already
+# (app -> fastapi) and every target silently broke.
+APP := fastapi
+
+.PHONY: help up down build rebuild restart logs ps migrate shell db test load load-chat check monitoring targets
 
 help:  ## show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -28,26 +32,26 @@ up:  ## start the stack in the background
 	$(COMPOSE) up -d
 
 build:  ## build the app image
-	$(COMPOSE) build app
+	$(COMPOSE) build $(APP)
 
 rebuild:  ## rebuild and recreate the app container
-	$(COMPOSE) build app
-	$(COMPOSE) up -d --force-recreate app
+	$(COMPOSE) build $(APP)
+	$(COMPOSE) up -d --force-recreate $(APP)
 
 restart:  ## recreate the app container without rebuilding (picks up .env changes)
-	$(COMPOSE) up -d --force-recreate app
+	$(COMPOSE) up -d --force-recreate $(APP)
 
 down:  ## stop the stack, keeping volumes
 	$(COMPOSE) down
 
 logs:  ## follow the app logs
-	$(COMPOSE) logs -f app
+	$(COMPOSE) logs -f $(APP)
 
 ps:  ## show container status
 	$(COMPOSE) ps
 
 shell:  ## a shell inside the running app container
-	$(COMPOSE) exec app sh
+	$(COMPOSE) exec $(APP) sh
 
 db:  ## a psql prompt on the database
 	$(COMPOSE) exec pgvector psql -U $${POSTGRES_USERNAME:-postgres} -d $${POSTGRES_MAIN_DATABASE:-customer_support}
@@ -56,10 +60,23 @@ migrate:  ## apply migrations on the HOST (the container does this on boot too)
 	uv run alembic upgrade head
 
 test:  ## run the test suite
-	uv run pytest tests -q --no-cov
+	uv run --extra dev pytest tests -q --no-cov
 
 load:  ## read-only load test — free, no model calls
-	uv run locust -f tests/load/locustfile.py --host http://127.0.0.1:8000 ReadOnlyUser
+	uv run --extra dev locust -f tests/load/locustfile.py --host http://127.0.0.1:8000 ReadOnlyUser
 
 load-chat:  ## full-pipeline load test — SPENDS REAL MONEY and writes tickets
-	uv run locust -f tests/load/locustfile.py --host http://127.0.0.1:8000 ConversationUser
+	uv run --extra dev locust -f tests/load/locustfile.py --host http://127.0.0.1:8000 ConversationUser
+
+check:  ## validate the compose file without starting anything
+	$(COMPOSE) config --quiet && echo "compose OK"
+
+monitoring:  ## where the dashboards are (all bound to localhost)
+	@echo "  Grafana     http://localhost:3000   (see GF_SECURITY_ADMIN_* in .env)"
+	@echo "  Prometheus  http://localhost:9090"
+	@echo "  API         http://localhost:8000   direct, bypasses nginx"
+	@echo "  nginx       http://localhost:80     the front door"
+
+targets:  ## show which scrape targets Prometheus currently has up
+	@curl -s localhost:9090/api/v1/targets \
+		| python3 -c "import json,sys; [print(f\"  {t['labels']['job']:18} {t['health']}\") for t in json.load(sys.stdin)['data']['activeTargets']]"

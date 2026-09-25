@@ -1,0 +1,124 @@
+# Alert rules.
+#
+# Thresholds here are deliberately of two kinds, and the distinction is worth keeping
+# when you edit them:
+#
+#   STRUCTURAL — derived from something the system guarantees. A healthy judge never
+#   fails; max_connections is 100; a scrape target is up or it is not. These are safe
+#   to trust now.
+#
+#   BEHAVIOURAL — derived from what normal traffic looks like. There is no baseline
+#   yet (the load tests never reached steady state), so the one behavioural rule below
+#   is set where it means "obviously broken" rather than "unusual". Tighten it once a
+#   week of real traffic exists; a threshold guessed tight cries wolf until someone
+#   mutes it, which is worse than not alerting at all.
+#
+# Firing is visible at http://localhost:9090/alerts. DELIVERY is not wired — routing
+# to email or Slack needs an Alertmanager service, which is not in the compose file.
+
+groups:
+  - name: customer_support_app
+    rules:
+      # STRUCTURAL. The leading indicator, and the reason the counter exists at all.
+      # A fail-closed judge escalates with the same gate reason a genuine low score
+      # produces, so this is the only signal that separates "the provider is
+      # degrading" from "retrieval is bad". It fires BEFORE the escalation rate moves,
+      # because it is the cause rather than the symptom.
+      - alert: JudgesFailingClosed
+        expr: sum(rate(customer_support_judge_failures_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Judges are failing closed — answers are being escalated unverified"
+          description: >-
+            {{ $value | printf "%.2f" }} judge failures/sec over 5 minutes. The API is
+            still returning 200 with normal latency; the agent has stopped answering.
+            Check the model provider for rate limiting or an outage.
+
+      # BEHAVIOURAL. Set where it means obviously broken, not merely unusual.
+      - alert: EscalationRateHigh
+        expr: >-
+          sum(rate(customer_support_questions_total{outcome="escalated"}[15m]))
+          /
+          clamp_min(sum(rate(customer_support_questions_total[15m])), 0.001)
+          > 0.5
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Over half of questions are escalating"
+          description: >-
+            {{ $value | humanizePercentage }} of questions went to a human over 15
+            minutes. If JudgesFailingClosed is also firing, treat that as the cause.
+            Otherwise this is a retrieval or threshold problem, not an outage.
+
+      # STRUCTURAL. This endpoint reads through the LangGraph checkpointer, which is a
+      # single Postgres connection behind a process-global lock. It is the first thing
+      # to degrade under concurrency, and it degrades as queueing rather than errors.
+      - alert: ConversationReadsSlow
+        expr: >-
+          histogram_quantile(0.95, sum by (le) (rate(
+            customer_support_request_latency_seconds_bucket{endpoint="/api/v1/chat/{thread_id}"}[5m]
+          ))) > 3
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Conversation reads are queueing on the checkpointer lock"
+          description: >-
+            p95 is {{ $value | printf "%.1f" }}s. Expect this before anything else
+            breaks under load; the fix is the conversations index table, not tuning.
+
+      # STRUCTURAL. The canary for a cardinality regression. The app's real label
+      # surface is a few dozen series; anything near this means a metric started being
+      # labelled with something unbounded, such as a raw URL path.
+      - alert: MetricCardinalityGrowing
+        expr: count({__name__=~"customer_support_.+"}) > 500
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "customer_support metrics have {{ $value }} series"
+          description: >-
+            The intended surface is a few dozen. A label is being fed something
+            unbounded — check for a raw path, id or uuid in a labels() call.
+
+  - name: customer_support_infra
+    rules:
+      # STRUCTURAL.
+      - alert: TargetDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} is not being scraped"
+          description: "Prometheus cannot reach {{ $labels.instance }}."
+
+      # STRUCTURAL. max_connections is 100; the app's own budget is workers x 10 +
+      # workers. Reaching 80 means something is leaking or the worker count grew
+      # without this sum being redone.
+      - alert: PostgresConnectionsHigh
+        expr: sum(pg_stat_database_numbackends) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Postgres is at {{ $value }} of 100 connections"
+          description: >-
+            The app budget is (pool_size + max_overflow) x workers + one checkpointer
+            each. Check --workers in the Dockerfile against the pool in main.py.
+
+      # STRUCTURAL: a container that exits and restarts repeatedly.
+      - alert: ContainerRestarting
+        expr: >-
+          changes(process_start_time_seconds{job=~"fastapi|postgres|qdrant"}[30m]) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.job }} has restarted repeatedly"
+          description: >-
+            More than three restarts in 30 minutes. If memory limits are set, this is
+            most likely the OOM killer.

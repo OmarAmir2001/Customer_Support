@@ -41,7 +41,6 @@ dependencies = [
     "psycopg[binary,pool]>=3.3.6",
     "structlog>=26.1.0",
     "prometheus-client>=0.26.0",
-    "starlette-exporter>=0.24.0",
     "fastapi-health>=0.4.0",
 ]
 

@@ -1,0 +1,13 @@
+# Tells Grafana to load any dashboard JSON dropped into /etc/grafana/dashboards.
+apiVersion: 1
+
+providers:
+  - name: customer_support
+    orgId: 1
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: false
