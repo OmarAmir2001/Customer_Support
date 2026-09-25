@@ -8,10 +8,9 @@ here, deliberately: ticket answers fill gaps, they never override the handbook.
 
 import asyncio
 
-from customer_support.stores.llm.LLMEnum import DocumentTypeEnum
-
 from customer_support.helpers.logging_config import get_logger
 from customer_support.models.db_schemas import RetrievedDocument
+from customer_support.stores.llm.LLMEnum import DocumentTypeEnum
 
 from .BaseController import BaseController
 

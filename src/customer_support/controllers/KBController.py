@@ -1,11 +1,12 @@
 import asyncio
+import json
+
+from customer_support.helpers.logging_config import get_logger
+from customer_support.models.db_schemas import DataChunk, Project
+from customer_support.stores.llm.LLMEnum import DocumentTypeEnum
 
 from .BaseController import BaseController
-from customer_support.models.db_schemas import Project, DataChunk
-from customer_support.stores.llm.LLMEnum import DocumentTypeEnum
-from customer_support.helpers.logging_config import get_logger
-from typing import List
-import json
+
 
 class KBController(BaseController):
     def __init__(self,vectordb_client,generation_client,embedding_client):
@@ -33,7 +34,8 @@ class KBController(BaseController):
         # raises TypeError, which is what made this endpoint a guaranteed 500.
         return json.loads(json.dumps(collection_info, default=lambda o: o.__dict__))
 
-    async def index_into_vector_db(self,project:Project,chunks:List[DataChunk],chunks_ids:List[int],do_reset:bool=False):
+    async def index_into_vector_db(self, project:Project, chunks:list[DataChunk],
+                                   chunks_ids:list[int], do_reset:bool=False):
 
         # step 1: get collection name
         collection_name = self.create_collection_name(project_id=project.project_id)

@@ -1,8 +1,8 @@
+from sqlalchemy import delete, select
+
 from .BaseDataModel import BaseDataModel
 from .db_schemas import DataChunk
-from .enums.DatabaseEnum import DatabaseEnum
-from sqlalchemy import select
-from sqlalchemy import func,delete
+
 
 class ChunkModel(BaseDataModel):
     def __init__(self, db_client: object):
@@ -27,7 +27,9 @@ class ChunkModel(BaseDataModel):
     async def get_chunk(self,chunk_id: str):
         async with self.db_client() as session:
             async with session.begin():
-                result = await session.execute(select(DataChunk).where(DataChunk.chunk_id == chunk_id))
+                result = await session.execute(
+                    select(DataChunk).where(DataChunk.chunk_id == chunk_id)
+                )
                 # Consume the result exactly once: the second scalar_one_or_none() on a
                 # spent result is what made this return None for rows that do exist.
                 return result.scalar_one_or_none()
@@ -54,7 +56,10 @@ class ChunkModel(BaseDataModel):
 
     async def get_all_chunks_by_project_id(self, project_id: int, page: int=1 , page_size: int=50 ):
         async with self.db_client() as session:
-            stmt= select(DataChunk).where(DataChunk.chunk_project_id == project_id).offset((page-1)*page_size).limit(page_size)
+            stmt= (select(DataChunk)
+                   .where(DataChunk.chunk_project_id == project_id)
+                   .offset((page-1)*page_size)
+                   .limit(page_size))
             result = await session.execute(stmt)
             records = result.scalars().all()
         return records

@@ -1,11 +1,18 @@
+import os
+import re
+
+from fastapi import UploadFile
+
+from customer_support.models.enums import ResponseSignal
+
 from .BaseController import BaseController
 from .ProjectController import ProjectController
-from fastapi import UploadFile
-from customer_support.models.enums import ResponseSignal
-import re
-import os
+
+
 # this class is responsible for handling file ingestion and validation in the Database.
-# It provides methods to validate uploaded files, generate unique file paths, and clean filenames for storage. The class ensures that files meet the specified criteria before they are processed and stored in the system.
+# It provides methods to validate uploaded files, generate unique file paths, and
+# clean filenames for storage. The class ensures that files meet the specified
+# criteria before they are processed and stored in the system.
 class DataController(BaseController):
     def __init__(self):
         super().__init__()
@@ -43,7 +50,8 @@ class DataController(BaseController):
         """
         Generate a clean filename by removing special characters and spaces.
         """
-        # Use regex to replace any character that is not a word character, dot, or hyphen with an underscore
+        # Use regex to replace any character that is not a word character, dot,
+        # or hyphen with an underscore
         cleaned_filename = re.sub(r'[^\w.-]', '_', original_filename.strip())
         cleaned_filename = cleaned_filename.replace(' ', '_')  # Replace spaces with underscores
         return cleaned_filename

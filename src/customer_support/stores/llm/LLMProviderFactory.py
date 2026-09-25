@@ -1,5 +1,5 @@
 from .LLMEnum import LLMEnums
-from .providers import OpenAIProvider,CohereProvider
+from .providers import CohereProvider, OpenAIProvider
 
 
 class LLMProviderFactory:

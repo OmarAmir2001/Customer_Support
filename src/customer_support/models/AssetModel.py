@@ -1,8 +1,7 @@
+from sqlalchemy import select
+
 from .BaseDataModel import BaseDataModel
 from .db_schemas import Asset
-from .enums.DatabaseEnum import DatabaseEnum
-from sqlalchemy import select
-from sqlalchemy import func,delete
 
 
 class AssetModel(BaseDataModel):

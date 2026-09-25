@@ -1,4 +1,5 @@
-from enum import Enum
+from enum import StrEnum
 
-class AssetTypeEnum(str, Enum):
+
+class AssetTypeEnum(StrEnum):
     FILE = "file"

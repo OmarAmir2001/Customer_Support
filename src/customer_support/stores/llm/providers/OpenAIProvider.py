@@ -1,9 +1,11 @@
-from ..LLMInterface import LLMInterface
-from ..LLMEnum import LLMEnums
-from ..LLMEnum import OpenAIEnums
+
 from openai import OpenAI
+
 from customer_support.helpers.logging_config import get_logger
-from typing import List,Union
+
+from ..LLMEnum import OpenAIEnums
+from ..LLMInterface import LLMInterface
+
 
 class OpenAIProvider(LLMInterface):
     def __init__(self,api_key:str, api_url:str = None,
@@ -60,7 +62,8 @@ class OpenAIProvider(LLMInterface):
                     messages=messages,
                     max_tokens=max_output_tokens,
                     temperature=temperature)
-            if not response or not response.choices or len(response.choices) == 0 or not response.choices[0].message:
+            if (not response or not response.choices or len(response.choices) == 0
+                    or not response.choices[0].message):
                     self.logger.error(
                         "generation_response_invalid",
                         provider="openai",
@@ -110,7 +113,7 @@ class OpenAIProvider(LLMInterface):
                     return None
             return response.choices[0].message.content
 
-    def embed_text(self, text:Union[str,List[str]], document_type:str=None):
+    def embed_text(self, text:str | list[str], document_type:str=None):
             if not self.client:
                     self.logger.error(
                         "llm_client_not_initialised", provider="openai", operation="embed_text"
@@ -133,7 +136,8 @@ class OpenAIProvider(LLMInterface):
             response = self.client.embeddings.create(
                     model=self.embedding_model_id,
                     input=text)
-            if not response or not response.data or len(response.data) == 0 or not response.data[0].embedding:
+            if (not response or not response.data or len(response.data) == 0
+                    or not response.data[0].embedding):
                     self.logger.error(
                         "embedding_response_invalid",
                         provider="openai",

@@ -1,8 +1,8 @@
+from sqlalchemy import func, select
+
 from .BaseDataModel import BaseDataModel
 from .db_schemas import Project
-from .enums.DatabaseEnum import DatabaseEnum
-from sqlalchemy import select
-from sqlalchemy import func
+
 
 class ProjectModel(BaseDataModel):
     def __init__(self, db_client: object):
@@ -41,7 +41,9 @@ class ProjectModel(BaseDataModel):
     async def get_all_projects(self, page: int=1 ,page_size: int=10):
         async with self.db_client() as session:
             async with session.begin():
-                total_documents = await session.execute(select(func.count(Project.project_id)).select_from(Project))
+                total_documents = await session.execute(
+                    select(func.count(Project.project_id)).select_from(Project)
+                )
                 total_documents = total_documents.scalar_one()
 
                 total_pages = total_documents // page_size

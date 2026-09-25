@@ -1,9 +1,9 @@
 from pathlib import Path
 
-from .providers import QdrantDBProvider
-from .providers import PgVectorProvider
-from .VectorDBEnum import VectorDBEnums
 from sqlalchemy.orm import sessionmaker
+
+from .providers import PgVectorProvider, QdrantDBProvider
+from .VectorDBEnum import VectorDBEnums
 
 
 class VectorDBProviderFactory:
@@ -13,7 +13,8 @@ class VectorDBProviderFactory:
 
     def create(self, provider: str):
         if provider == VectorDBEnums.QDRANT.value:
-            quadrant_db_client = Path(self.config.ASSETS_DIR) / "database" / self.config.VECTOR_DB_PATH
+            quadrant_db_client = (Path(self.config.ASSETS_DIR) / "database"
+                                  / self.config.VECTOR_DB_PATH)
             quadrant_db_client.mkdir(parents=True, exist_ok=True)
             return QdrantDBProvider(
                 db_client=str(quadrant_db_client),

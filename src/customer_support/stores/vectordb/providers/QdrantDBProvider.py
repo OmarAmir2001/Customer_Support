@@ -1,10 +1,12 @@
-from ..VectorDBInterface import VectorDBInterface
-from ..VectorDBEnum import DistanceMethodEnums
-from qdrant_client import models,QdrantClient
-from typing import List
-from customer_support.helpers.logging_config import get_logger
 import uuid
+
+from qdrant_client import QdrantClient, models
+
+from customer_support.helpers.logging_config import get_logger
 from customer_support.models.db_schemas import RetrievedDocument
+
+from ..VectorDBEnum import DistanceMethodEnums
+from ..VectorDBInterface import VectorDBInterface
 
 
 class QdrantDBProvider(VectorDBInterface):
@@ -31,7 +33,7 @@ class QdrantDBProvider(VectorDBInterface):
     async def is_collection_exists(self, collection_name:str)-> bool:
         return self.client.collection_exists(collection_name=collection_name)
 
-    async def list_all_collections(self)-> List:
+    async def list_all_collections(self)-> list:
         return self.client.get_collections()
 
     async def get_collection_info(self,collection_name:str) -> dict:

@@ -1,11 +1,17 @@
-from ..VectorDBInterface import VectorDBInterface
-from ..VectorDBEnum import (DistanceMethodEnums, PgVectorTableSchemeEnums,
-                            PgVectorDistanceMethodEnums,PgVectorIndexTypeEnums)
-from customer_support.helpers.logging_config import get_logger
-from typing import List
-from customer_support.models.db_schemas import RetrievedDocument
-from sqlalchemy.sql import text as sql_text
 import json
+
+from sqlalchemy.sql import text as sql_text
+
+from customer_support.helpers.logging_config import get_logger
+from customer_support.models.db_schemas import RetrievedDocument
+
+from ..VectorDBEnum import (
+    DistanceMethodEnums,
+    PgVectorDistanceMethodEnums,
+    PgVectorIndexTypeEnums,
+    PgVectorTableSchemeEnums,
+)
+from ..VectorDBInterface import VectorDBInterface
 
 
 class PgVectorProvider(VectorDBInterface):
@@ -58,7 +64,7 @@ class PgVectorProvider(VectorDBInterface):
                          list_tbl,{"collection_name":collection_name})
                      return bool(results.scalar_one_or_none())
 
-    async def list_all_collections(self)-> List:
+    async def list_all_collections(self)-> list:
          records = []
          async with self.db_client() as session:
                      async with session.begin():
@@ -76,7 +82,7 @@ class PgVectorProvider(VectorDBInterface):
         async with self.db_client() as session:
             async with session.begin():
 
-                table_info_sql = sql_text(f'''
+                table_info_sql = sql_text('''
                     SELECT schemaname, tablename, tableowner, tablespace, hasindexes
                     FROM pg_tables
                     WHERE tablename = :collection_name
@@ -187,7 +193,7 @@ class PgVectorProvider(VectorDBInterface):
         index_name = self.default_index_name(collection_name)
         async with self.db_client() as session:
             async with session.begin():
-                check_sql = sql_text(f"""
+                check_sql = sql_text("""
                                     SELECT 1
                                     FROM pg_indexes
                                     WHERE tablename = :collection_name
@@ -247,7 +253,9 @@ class PgVectorProvider(VectorDBInterface):
                 drop_sql = sql_text(f'DROP INDEX IF EXISTS {index_name}')
                 await session.execute(drop_sql)
 
-        return await self.create_vector_index(collection_name=collection_name, index_type=index_type)
+        return await self.create_vector_index(
+            collection_name=collection_name, index_type=index_type
+        )
 
 
     async def insert_one(self, collection_name: str, text: str, vector: list,
@@ -323,8 +331,18 @@ class PgVectorProvider(VectorDBInterface):
 
                     values = []
 
+                    # strict=True is load-bearing, not a lint fix. These four lists
+                    # are parallel slices of one batch; if they ever disagree in
+                    # length, plain zip() stops at the shortest and quietly indexes
+                    # FEWER rows than were handed to it. Nothing raises, nothing logs,
+                    # and the collection ends up missing chunks that the caller
+                    # believes it inserted. Raising is the only safe behaviour.
                     for _text, _vector, _metadata, _record_id in zip(
-                        batch_texts, batch_vectors, batch_metadata, batch_record_ids
+                        batch_texts,
+                        batch_vectors,
+                        batch_metadata,
+                        batch_record_ids,
+                        strict=True,
                     ):
                         metadata_json = (json.dumps(_metadata, ensure_ascii=False)
                                          if _metadata is not None else "{}")

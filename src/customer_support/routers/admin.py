@@ -1,22 +1,29 @@
-from fastapi import APIRouter,UploadFile, Depends, status,Request
-from fastapi.responses import JSONResponse
-from customer_support.helpers import get_settings, Settings
-from customer_support.controllers import DataController, ProjectController, ProcessController , KBController,RetrievalController
-import aiofiles
-from sqlalchemy.exc import MultipleResultsFound
-from customer_support.models import ResponseSignal
-from customer_support.helpers.logging_config import get_logger
-from .schemas import ProcessRequest,SearchRequest
-from .schemas import PushRequest
-from customer_support.models.ProjectModel import ProjectModel
-from customer_support.models.ChunkModel import ChunkModel
-from customer_support.models.db_schemas import Asset,DataChunk
-from customer_support.models.AssetModel import AssetModel
-
-from customer_support.models.enums.AssetTypeEnum import AssetTypeEnum
-from customer_support.models.enums.ProcessingEnum import ProcessingEnum
+import asyncio
 import os
 
+import aiofiles
+from fastapi import APIRouter, Depends, Request, UploadFile, status
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import MultipleResultsFound
+
+from customer_support.controllers import (
+    DataController,
+    KBController,
+    ProcessController,
+    ProjectController,
+    RetrievalController,
+)
+from customer_support.helpers import Settings, get_settings
+from customer_support.helpers.logging_config import get_logger
+from customer_support.models import ResponseSignal
+from customer_support.models.AssetModel import AssetModel
+from customer_support.models.ChunkModel import ChunkModel
+from customer_support.models.db_schemas import Asset, DataChunk
+from customer_support.models.enums.AssetTypeEnum import AssetTypeEnum
+from customer_support.models.enums.ProcessingEnum import ProcessingEnum
+from customer_support.models.ProjectModel import ProjectModel
+
+from .schemas import ProcessRequest, PushRequest, SearchRequest
 
 logger = get_logger(__name__)
 
@@ -26,7 +33,8 @@ admin_router = APIRouter(
 )
 # Placeholder implementation for admin management.
 @admin_router.post("/ingest/{project_id}")
-async def ingest_data(request: Request,project_id: int, file: UploadFile, app_settings: Settings = Depends(get_settings)):
+async def ingest_data(request: Request, project_id: int, file: UploadFile,
+                      app_settings: Settings = Depends(get_settings)):
     """
     Endpoint to ingest data into the system.
     This endpoint accepts a file upload and associates it with a specific project.
@@ -47,16 +55,23 @@ async def ingest_data(request: Request,project_id: int, file: UploadFile, app_se
             status_code=status.HTTP_400_BAD_REQUEST,
             content={"signal": result_signal}
         )
-    # Get the project directory path using ProjectController
-    project_dir_path=ProjectController().get_project_path(project_id=project_id)
-    file_path, file_id = data_controller.generate_unique_filepath(original_filename=file.filename, project_id=project_id)
+    # The RETURN VALUE is unused, but the call is not optional: get_project_path
+    # does an os.makedirs, so this is what creates the upload directory. Deleting
+    # the line (which is what an automated "remove unused variable" fix does) makes
+    # the aiofiles.open below fail with FileNotFoundError on the first upload to a
+    # new project. Keep the call, drop the binding.
+    ProjectController().get_project_path(project_id=project_id)
+    file_path, file_id = data_controller.generate_unique_filepath(
+        original_filename=file.filename, project_id=project_id
+    )
 
     # Save the uploaded file in chunks to the project directory
     try:
         async with aiofiles.open(file_path, 'wb') as f:
             while chunk:= await file.read(app_settings.FILE_DEFAULT_CHUNK_SIZE):
                 await f.write(chunk)
-    # Handle any exceptions that occur during file ingestion and return a 500 Internal Server Error response with the appropriate signal and error message.
+    # Handle any exceptions that occur during file ingestion and return a 500
+    # Internal Server Error response with the appropriate signal and error message.
     except Exception as e:
         logger.error(
             "file_ingestion_failed",
@@ -75,7 +90,11 @@ async def ingest_data(request: Request,project_id: int, file: UploadFile, app_se
     asset_resource = Asset(asset_project_id=project.project_id,
                   asset_type=AssetTypeEnum.FILE.value,
                   asset_name=file_id,
-                  asset_size=os.path.getsize(file_path)
+                  # to_thread: os.path.getsize is a blocking stat, and this is an
+                  # async handler. One stat is fast, but "fast" on a cold or network
+                  # filesystem is not guaranteed, and blocking the event loop blocks
+                  # every other request in this worker, not just this one.
+                  asset_size=await asyncio.to_thread(os.path.getsize, file_path)
                   )
     asset_record=await asset_model.create_asset(asset=asset_resource)
 
@@ -92,7 +111,7 @@ async def ingest_data(request: Request,project_id: int, file: UploadFile, app_se
 
 
 #=========================================================================================================
-#======================== Process Endpoint for Re-running Handbook Ingestion Pipeline ====================
+#==================== Process Endpoint for Re-running Handbook Ingestion ================
 #=========================================================================================================
 @admin_router.post("/process/{project_id}")
 async def process_endpoint(request: Request,project_id: int, process_request: ProcessRequest):
@@ -207,7 +226,10 @@ async def process_endpoint(request: Request,project_id: int, process_request: Pr
         if file_chunks is None or len(file_chunks) == 0:
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                content={"signal": ResponseSignal.FILE_PROCESSING_FAILED.value, "error": "No chunks were created from the file content."}
+                content={
+                    "signal": ResponseSignal.FILE_PROCESSING_FAILED.value,
+                    "error": "No chunks were created from the file content.",
+                }
             )
 
 
@@ -231,7 +253,7 @@ async def process_endpoint(request: Request,project_id: int, process_request: Pr
     
 
 #=========================================================================================================
-#======================== Index Endpoint for getting knowledge base stats ================================
+#==================== Index Endpoint for getting knowledge base stats ===================
 #=========================================================================================================
 
 @admin_router.get("/index_info/info/{project_id}")
@@ -251,7 +273,7 @@ async def get_project_index_info(request: Request,project_id: int):
             })
 
 #=========================================================================================================
-#======================== Index Endpoint for pushing knowledge base to vector database ====================
+#==================== Index Endpoint for pushing the KB to the vector database ==========
 #=========================================================================================================
 
 @admin_router.post("/knowledge_base/push/{project_id}")
@@ -324,7 +346,7 @@ async def push_knowledge_base(request: Request,project_id: int,push_request: Pus
         })
     
 #=========================================================================================================
-#======================== Index Endpoint for search knowledge base =======================================
+#==================== Index Endpoint for searching the knowledge base ===================
 #=========================================================================================================
 
 @admin_router.post("/knowledge_base/search/{project_id}")

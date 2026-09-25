@@ -1,17 +1,18 @@
-from .BaseController import BaseController
-from .ProjectController import ProjectController
+import json
 import os
-from langchain_community.document_loaders import TextLoader
-from langchain_community.document_loaders import PyMuPDFLoader
-from customer_support.models.enums import ProcessingEnum
+
+from langchain_community.document_loaders import PyMuPDFLoader, TextLoader
+from langchain_core.documents import Document
 from langchain_text_splitters import (
     MarkdownHeaderTextSplitter,
     RecursiveCharacterTextSplitter,
 )
-import json
-from langchain_core.documents import Document
-from customer_support.helpers.logging_config import get_logger
 
+from customer_support.helpers.logging_config import get_logger
+from customer_support.models.enums import ProcessingEnum
+
+from .BaseController import BaseController
+from .ProjectController import ProjectController
 
 # Which heading levels start a new chunk, and the metadata key each one lands in.
 # Three levels because the handbooks use all three (CS: 1 h1 / 9 h2 / 35 h3), and a
@@ -200,7 +201,7 @@ class ProcessController(BaseController):
         file_path = os.path.join(self.project_path, file_id)
         if not os.path.exists(file_path):
             return None
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, encoding='utf-8') as f:
             raw_chunks = json.load(f)
 
         documents = []

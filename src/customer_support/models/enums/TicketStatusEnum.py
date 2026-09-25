@@ -1,9 +1,14 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class TicketStatus(str, Enum):
-    """Section 3 lifecycle. The ``str`` mixin makes it serialise straight to JSON and
-    to a Postgres varchar without a converter."""
+class TicketStatus(StrEnum):
+    """Section 3 lifecycle.
+
+    ``StrEnum`` rather than ``(str, Enum)``: both compare equal to their raw string,
+    but only StrEnum also FORMATS as it — ``f"{TicketStatus.PENDING}"`` is "pending"
+    instead of "TicketStatus.PENDING". So a member serialises straight to JSON and to
+    a Postgres varchar whether or not the caller remembered ``.value``.
+    """
 
     PENDING = "pending"
     UNDER_REVIEW = "under_review"
@@ -14,7 +19,7 @@ class TicketStatus(str, Enum):
     DUPLICATE = "duplicate"
 
 
-class TicketActor(str, Enum):
+class TicketActor(StrEnum):
     SYSTEM = "system"
     ADVISOR = "advisor"
     STUDENT = "student"

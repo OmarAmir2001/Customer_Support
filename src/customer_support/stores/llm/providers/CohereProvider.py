@@ -1,9 +1,10 @@
-from ..LLMInterface import LLMInterface
-from ..LLMEnum import LLMEnums
-from ..LLMEnum import CohereEnums,DocumentTypeEnum
+
 import cohere
+
 from customer_support.helpers.logging_config import get_logger
-from typing import List,Union
+
+from ..LLMEnum import CohereEnums, DocumentTypeEnum
+from ..LLMInterface import LLMInterface
 
 
 class CohereProvider(LLMInterface):
@@ -37,7 +38,7 @@ class CohereProvider(LLMInterface):
             return text[:self.default_input_max_characters].strip()
 
 
-    def generate_text(self,prompt:str, chat_history:list=[], max_output_tokens:int = None,
+    def generate_text(self,prompt:str, chat_history:list|None=None, max_output_tokens:int = None,
                             temperature:float=None):
           if not self.client:
                   self.logger.error(
@@ -48,8 +49,14 @@ class CohereProvider(LLMInterface):
                   self.logger.error("generation_model_not_set", provider="cohere")
                   return None
           
-          max_output_tokens = max_output_tokens if max_output_tokens else self.default_generation_max_output_tokens
+          max_output_tokens = (max_output_tokens if max_output_tokens
+                               else self.default_generation_max_output_tokens)
           temperature = temperature if temperature else self.default_generation_temperature
+
+          # Normalised here rather than in the signature: a [] default is shared
+          # across every call, so one mutation would leak into the next request.
+          # Matches what OpenAIProvider already does.
+          chat_history = chat_history or []
 
           response = self.client.chat(model=self.generation_model_id,
                                       chat_history=chat_history,
@@ -103,7 +110,7 @@ class CohereProvider(LLMInterface):
                 return None
         return response.text
 
-    def embed_text(self, text:Union[str,List[str]], document_type:str=None):
+    def embed_text(self, text:str | list[str], document_type:str=None):
         if not self.client:
                 self.logger.error(
                     "llm_client_not_initialised", provider="cohere", operation="embed_text"

@@ -1,13 +1,14 @@
+
 from pydantic import BaseModel
-from typing import Optional
+
 
 class PushRequest(BaseModel):
-    do_reset: Optional[int] = 0
+    do_reset: int | None = 0
 
 
 
 class SearchRequest(BaseModel):
     query: str
-    limit: Optional[int] = 10
+    limit: int | None = 10
     # Lets an admin exercise the department filter that real chat traffic goes through.
-    department: Optional[str] = None
+    department: str | None = None

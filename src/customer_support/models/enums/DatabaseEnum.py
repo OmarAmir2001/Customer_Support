@@ -1,6 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
-class DatabaseEnum(str, Enum):
+
+class DatabaseEnum(StrEnum):
     COLLECTION_PROJECT_NAME = "projects"
     COLLECTION_CHUNK_NAME = "chunks"
     COLLECTION_ASSET_NAME = "assets"

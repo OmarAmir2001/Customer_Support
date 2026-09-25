@@ -1,5 +1,5 @@
 from functools import lru_cache
-from typing import List
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     OPENAI_API_URL: str | None = None
     COHERE_API_KEY: str | None = None
 
-    GENERATION_MODEL_ID_LITERAL:List[str] = None
+    GENERATION_MODEL_ID_LITERAL:list[str] = None
     GENERATION_MODEL_ID: str | None = None
     EMBEDDING_MODEL_ID: str | None = None
     EMBEDDING_MODEL_SIZE: int | None = None
@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     GENERATION_DEFAULT_TEMPERATURE: float | None = None
 
     # --- vector DB ---
-    VECTOR_DB_BACKEND_LITERAL:List[str] = None
+    VECTOR_DB_BACKEND_LITERAL:list[str] = None
     VECTOR_DB_BACKEND: str
     VECTOR_DB_PATH: str
     VECTOR_DB_DISTANCE_METHOD: str | None = None

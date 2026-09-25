@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class GateEnum(str, Enum):
+class GateEnum(StrEnum):
     """The three orthogonal checks of Section 2.
 
     Orthogonal on purpose: each judges a different thing against different evidence,
@@ -20,7 +20,7 @@ class GateEnum(str, Enum):
     GENERATION = "generation"
 
 
-class GateFailureReason(str, Enum):
+class GateFailureReason(StrEnum):
     """Fallback reason strings. A judge usually returns something more specific;
     these are used when it cannot."""
 

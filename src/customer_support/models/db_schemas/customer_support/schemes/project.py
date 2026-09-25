@@ -1,8 +1,11 @@
-from .customer_support_base import SQLAlchemyBase
-from sqlalchemy import Column, Integer, String, Boolean, DateTime,func
+import uuid
+
+from sqlalchemy import Column, DateTime, Integer, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
-import uuid
+
+from .customer_support_base import SQLAlchemyBase
+
 
 class Project(SQLAlchemyBase):
     __tablename__ = "project"

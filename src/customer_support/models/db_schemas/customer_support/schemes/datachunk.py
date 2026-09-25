@@ -1,10 +1,11 @@
-from .customer_support_base import SQLAlchemyBase
-from sqlalchemy import Column, Integer, String, Boolean, DateTime,func,ForeignKey
-from sqlalchemy.dialects.postgresql import UUID, JSONB
-from sqlalchemy.orm import relationship
-from sqlalchemy import Index
-from pydantic import BaseModel
 import uuid
+
+from pydantic import BaseModel
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, func
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import relationship
+
+from .customer_support_base import SQLAlchemyBase
 
 
 class DataChunk(SQLAlchemyBase):

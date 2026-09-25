@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class ResponseSignal(Enum):
     FILE_VALIDATED_SUCCESS = "File validated successfully."
     FILE_VALIDATED_FAILURE = "File validation failed."
