@@ -425,26 +425,11 @@ only under the load that needs the connections most.
 
 ---
 
-## Roadmap
-
-Deferred deliberately — the core loop works without them:
-
-- [ ] **Per-student conversation index** — a `conversations` table (`thread_id` PK, `subject_id`, `created_at`, `last_message_at`, `turn_count`) upserted on each turn. Needed for "continue where I left off", for an advisor to see a student's other threads, and for the stale-ticket scanner to find abandoned ones. The checkpointer cannot answer this: it is keyed by `thread_id` and stores state as opaque blobs, and `tickets` only links a thread to a student when the conversation escalated. Lands with the advisor dashboard.
-- [ ] **Handbook review view** — the endpoint exists (`?promotion_held=true`) over the partial index; the dashboard screen that works the queue does not.
-- [ ] **Stale-ticket scanner** — one scheduled job over `ticket_status_history` ("time since last transition"), never a timer per ticket. Remind for never-picked-up tickets, auto-close resolved-but-unconfirmed ones.
-- [ ] **Duplicate detection** — match an incoming question against already-resolved tickets and auto-resolve by pointing at the existing answer.
-- [ ] **Offline evaluation** — Hit Rate / MRR on a labelled set, to calibrate the gate thresholds that are currently guessed.
-- [ ] **The UI** — a **Tailwind** front end built to existing designs (student chat + advisor dashboard). Not Gradio; earlier notes that say Gradio are superseded. The API it needs is complete: every lifecycle action has an endpoint.
-- [ ] **Alert delivery** — the rules exist and fire, but nothing routes them. Needs an Alertmanager service and a destination. Until then they are visible only at `/alerts`, which is a dashboard someone has to open.
-- [ ] **A tuned escalation threshold** — `EscalationRateHigh` is the one behavioural rule and is set at "obviously broken" (50%). Tightening it needs a week of real traffic to establish what normal looks like.
-- [ ] **Streaming responses** and a deployed demo.
-- [ ] **Domain-agnostic configuration** (deliberately deferred — see below).
-
-### On making this domain-agnostic
+## Why this is domain-specific, on purpose
 
 The target is **multi-domain** — one client per deployment, configured — not multi-tenant. Multi-tenant is a different product: `tenant_id` on every table and query, KB partitioning, thread-id scoping, isolation tests.
 
-It is deferred because the coupling is shallow, not because it is hard. The engine layers — gates, ticket lifecycle, source-of-truth sync, locale parser, provider factories — are already domain-neutral. The academic vocabulary is confined to:
+The coupling that would have to move is shallow rather than hard. The engine layers — gates, ticket lifecycle, source-of-truth sync, locale parser, provider factories — are already domain-neutral. The academic vocabulary is confined to:
 
 - `RetrievalController.HANDBOOK_SOURCES`
 - `ProcessController.HANDBOOK_DEPARTMENTS`
@@ -455,7 +440,7 @@ It is deferred because the coupling is shallow, not because it is hard. The engi
 
 Generalising means moving those to `Settings`, putting the domain nouns behind placeholders, and adding an `attributes` JSONB bag to the profile for tenant-specific facts like `gpa`. The rule for what stays fixed: **a state field is core if the engine reads it, and an attribute if only prompts and filters read it.** A partition key must exist for retrieval to filter on; that it is called "department" and holds CS/IS is configuration.
 
-Renaming `student_id` is the one item that gets more expensive with time, and the trigger is the UI — that is when a field name first gets hardcoded by a client. Renaming the `instructor_resolved` metadata tag is *not* expensive: pgvector is a rebuildable projection, so it is a re-push.
+Renaming `student_id` is the one item that gets more expensive with time, because it is part of the public request body — the cost lands the moment any client hardcodes it. Renaming the `instructor_resolved` metadata tag is *not* expensive: pgvector is a rebuildable projection, so it is a re-push.
 
 ---
 
