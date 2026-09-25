@@ -40,11 +40,21 @@ RUN cp alembic.ini.example alembic.ini
 # volume is attached, so Docker seeds the volume with this ownership instead of
 # root's — otherwise uploads fail with EACCES on first boot.
 RUN useradd --create-home --uid 10001 appuser \
- && mkdir -p /app/assets/files /app/assets/database \
- && chown -R appuser:appuser /app
+ && mkdir -p /app/assets/files /app/assets/database /tmp/prometheus \
+ && chown -R appuser:appuser /app /tmp/prometheus
 USER appuser
+
+# --workers runs N separate processes, and prometheus_client keeps its counters in
+# process memory. A scrape reaches whichever worker the kernel hands the socket to,
+# so without this every number on the dashboard would be roughly 1/N of the truth,
+# and a different Nth each scrape. In multiprocess mode the workers write to mmap
+# files here and the scrape endpoint sums them.
+#
+# Deliberately a tmpfs-ish path and not a volume: these files describe the CURRENT
+# set of processes, so they must not survive a restart. The entrypoint clears them.
+ENV PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus
 
 EXPOSE 8000
 
 ENTRYPOINT ["/app/docker/docker-entrypoint.sh"]
-CMD ["uvicorn", "customer_support.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "customer_support.main:app", "--host", "0.0.0.0", "--port", "8000","--workers","4"]

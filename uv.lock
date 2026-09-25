@@ -679,6 +679,7 @@ dependencies = [
     { name = "asyncpg" },
     { name = "cohere" },
     { name = "fastapi" },
+    { name = "fastapi-health" },
     { name = "langchain-community" },
     { name = "langchain-core" },
     { name = "langchain-text-splitters" },
@@ -687,6 +688,7 @@ dependencies = [
     { name = "nltk" },
     { name = "openai" },
     { name = "pgvector" },
+    { name = "prometheus-client" },
     { name = "psycopg", extra = ["binary", "pool"] },
     { name = "psycopg2-binary" },
     { name = "pydantic" },
@@ -720,6 +722,7 @@ requires-dist = [
     { name = "asyncpg", specifier = ">=0.31.0" },
     { name = "cohere", specifier = ">=7.0.8" },
     { name = "fastapi", specifier = ">=0.138.0" },
+    { name = "fastapi-health", specifier = ">=0.4.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28" },
     { name = "jupyter", marker = "extra == 'notebooks'", specifier = ">=1.1.1" },
     { name = "langchain-community", specifier = ">=0.4.2" },
@@ -732,6 +735,7 @@ requires-dist = [
     { name = "openai", specifier = ">=2.52.0" },
     { name = "pgvector", specifier = ">=0.5.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.0" },
+    { name = "prometheus-client", specifier = ">=0.26.0" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.3.6" },
     { name = "psycopg2-binary", specifier = ">=2.9.10" },
     { name = "pydantic", specifier = ">=2.13.4" },
@@ -825,6 +829,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/5b/58/ff455d9fe47c60abadb34b9e05a304b1f05f5ab8000ac01565156b6f5e43/fastapi-0.138.0.tar.gz", hash = "sha256:d445a4877636ad191e7053e08c9bf98cb921a6756776848400bb773d1740c061", size = 419240, upload-time = "2026-06-20T01:18:05.259Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/6c/ff/8496d9847a5fedae775eb49460722d3efaa80487854273e9647ae876218c/fastapi-0.138.0-py3-none-any.whl", hash = "sha256:b6f54fd1bd72c80b0f899f172c61a600f6f7af9b43d4d772a018f35624048cb0", size = 126779, upload-time = "2026-06-20T01:18:03.483Z" },
+]
+
+[[package]]
+name = "fastapi-health"
+version = "0.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "fastapi" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ce/97/27bdba7462672adf9815c0ac05c6d1c1ff49527b5d5a8a4e41034a58b6c2/fastapi-health-0.4.0.tar.gz", hash = "sha256:a0781b2359732d50cddda1195784f78950265c6b3689d7a1e6e65a21aed4d6a5", size = 3960, upload-time = "2021-08-20T07:38:29.186Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cf/3d/bc1003fb1708f7cfe1546a22875c38ebc901e621564aeef3bb97f32b1ab2/fastapi_health-0.4.0-py3-none-any.whl", hash = "sha256:d6c1795f7596009cffa7a84d5a67a6b66bbf9d6ce79b040fd50601ed5392089f", size = 3990, upload-time = "2021-08-20T07:38:30.518Z" },
 ]
 
 [[package]]

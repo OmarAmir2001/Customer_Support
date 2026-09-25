@@ -27,6 +27,7 @@ from customer_support.stores.llm.templates import (
     TemplateParser,
     format_excerpts,
 )
+from customer_support.utils.metrics import record_judge_failure
 
 from .BaseController import BaseController
 
@@ -153,6 +154,11 @@ class GradingController(BaseController):
                 )
 
         self.logger.error("judge_unavailable_failing_closed", gate=gate.value)
+        # Counted here and nowhere else: this is the only point in the system that
+        # still knows the escalation about to happen is an infrastructure failure
+        # rather than a verdict. One line further on it becomes a score of 0.0 and a
+        # gate reason indistinguishable from a real one.
+        record_judge_failure(gate.value)
         return JudgeVerdict(score=0.0, reason=fallback_reason.value)
 
     def _apply_threshold(

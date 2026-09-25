@@ -1,48 +1,44 @@
-
 # Lives in docker/ but is built and run against the REPO ROOT.
 #
-# Compose resolves relative paths in this file against THIS directory, and takes
-# its project directory (where it looks for `.env` to expand ${...}) from here
-# too. So every path below points up, and the documented command passes
-# --project-directory .. so the root .env is found for substitution.
+# Compose resolves relative paths in this file against THIS directory, and takes its
+# project directory (where it looks for `.env` to expand ${...}) from here too. So
+# every path below points up, and the documented command passes `--env-file .env`
+# from the repo root — NOT `--project-directory ..`, which would fix substitution but
+# then re-root every relative path in this file and send `env_file: ../.env` outside
+# the repo entirely. The Makefile encodes the correct flags; use `make up`.
 #
 # `name:` is pinned rather than derived from the directory name. Without it the
-# project would have been renamed by this move, and Compose would have created a
-# fresh customer_support_pgdata under a new prefix — silently abandoning the
-# database rather than failing.
+# project would have been renamed by the move into docker/, and Compose would have
+# created a fresh customer_support_pgdata under a new prefix — silently abandoning
+# the database rather than failing.
+# Memory limits are set on every service. They do not prevent a spike — they stop one
+# service's spike from becoming another's outage. Without them the host OOM killer
+# picks a victim by size rather than importance, and the largest process here is the
+# API while the most load-bearing is Postgres.
+#
+# Each limit is roughly double what that service was measured using, so ordinary work
+# never touches it. A container that exceeds its own limit is killed alone and
+# restarted by `restart: unless-stopped`; the ContainerRestarting alert catches a
+# limit set too low, which otherwise just looks like a mysterious crash.
 name: customer_support
-services:
-  pgvector:
-    image: pgvector/pgvector:0.8.6-pg18
-    container_name: customer_support_pg
-    ports:
-      - "127.0.0.1:5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql
-    environment:
-      # The image wants POSTGRES_USER/DB; the app's .env calls them
-      # POSTGRES_USERNAME/POSTGRES_MAIN_DATABASE. Compose substitutes them from the
-      # project's .env, so the credentials are defined in exactly one place.
-      - POSTGRES_USER=${POSTGRES_USERNAME}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_MAIN_DATABASE}
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
-    networks:
-      - backend
-    restart: unless-stopped
 
-  app:
+services:
+  # FastAPI Application
+  fastapi:
     build:
       # The repo root: Dockerfile copies src/, uv.lock and data/ from here.
       context: ..
       # Relative to the context, not to this file.
       dockerfile: docker/Dockerfile
     container_name: customer_support_api
+    # measured ~920M with 4 workers. Headroom for embedding batches and
+    # concurrent graph state; this is the service that actually spikes.
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+        reservations:
+          memory: 512m
     # Everything the app needs, read at run time. Compose's dotenv parser strips the
     # quotes and the spaces around `=` that this file uses, so it is consumed as-is.
     # Relative to this file, so it has to climb out of docker/.
@@ -59,6 +55,7 @@ services:
         # migration would otherwise race Postgres' own initdb on a fresh volume.
         condition: service_healthy
     ports:
+      # Loopback only. nginx is the front door; this is here for direct debugging.
       - "127.0.0.1:8000:8000"
     volumes:
       # Uploaded handbooks and the local Qdrant store. A named volume keeps them
@@ -82,9 +79,212 @@ services:
       - backend
     restart: unless-stopped
 
+  # Nginx — the public entry point.
+  nginx:
+    image: nginx:stable-alpine3.24-slim
+    container_name: customer_support_nginx
+    # measured ~13M. It proxies; it does not buffer much.
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+        reservations:
+          memory: 16m
+    ports:
+      # Deliberately NOT loopback-only: this is the front door. Everything behind it
+      # is bound to 127.0.0.1, so this is the one port that is meant to be reachable.
+      - "80:80"
+    volumes:
+      # :ro — nginx never writes its own config.
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      fastapi:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: unless-stopped
+
+  # PostgreSql (pgvector)
+  pgvector:
+    image: pgvector/pgvector:0.8.6-pg18
+    container_name: customer_support_pg
+    # measured ~78M idle, but shared_buffers and per-connection work_mem grow
+    # with load — and this is the one service whose death takes the rest with it.
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+        reservations:
+          memory: 256m
+    ports:
+      # Loopback only. A database on 0.0.0.0 is reachable from anything that can
+      # route to this host.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    environment:
+      # The image wants POSTGRES_USER/DB; the app's .env calls them
+      # POSTGRES_USERNAME/POSTGRES_MAIN_DATABASE. Compose substitutes them from the
+      # project's .env, so the credentials are defined in exactly one place.
+      - POSTGRES_USER=${POSTGRES_USERNAME}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_MAIN_DATABASE}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - backend
+    restart: unless-stopped
+
+  # Qdrant — the alternative vector backend. VECTOR_DB_BACKEND=PGVECTOR today, so
+  # this runs but nothing talks to it; it is here so switching backends is a config
+  # change rather than a compose edit.
+  qdrant:
+    image: qdrant/qdrant:v1.19.1
+    container_name: customer_support_qdrant
+    # measured ~69M idle. Unused today (VECTOR_DB_BACKEND=PGVECTOR).
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+        reservations:
+          memory: 64m
+    ports:
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - backend
+    restart: unless-stopped
+
+  # Prometheus Monitoring
+  prometheus:
+    image: prom/prometheus:v3.13.3
+    container_name: customer_support_prometheus
+    # measured ~98M. The TSDB holds recent series in memory, so this grows with
+    # CARDINALITY rather than request volume — which is what the
+    # MetricCardinalityGrowing alert exists to catch before this limit does.
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+        reservations:
+          memory: 128m
+    ports:
+      # Loopback only. Prometheus has no authentication of its own, and
+      # --web.enable-lifecycle below means anyone who can reach it can reload or
+      # stop it.
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - prometheus_data:/prometheus
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+    networks:
+      - backend
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+
+  # Grafana Dashboard
+  grafana:
+    image: grafana/grafana:13.2.2-ubuntu
+    container_name: customer_support_grafana
+    # measured ~640M. Grafana's heap grows with dashboards and query history
+    # rather than with traffic.
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+        reservations:
+          memory: 128m
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      # Read at boot: the Prometheus datasource is wired up from here rather than
+      # clicked in by hand, so a fresh volume comes up already working.
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GF_SECURITY_ADMIN_USER}
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=${GF_USERS_ALLOW_SIGN_UP}
+    depends_on:
+      - prometheus
+    networks:
+      - backend
+    restart: unless-stopped
+
+  # Node Exporter for system metrics
+  node_exporter:
+    image: prom/node-exporter:v1.12.1
+    container_name: customer_support_node_exporter
+    # measured ~19M.
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+        reservations:
+          memory: 16m
+    ports:
+      # Loopback only: this one mounts the host filesystem read-only, so it is the
+      # last thing that should answer from outside.
+      - "127.0.0.1:9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.ignored-mount-points=^/(sys|proc|dev|host|etc)($$|/)'
+    networks:
+      - backend
+    restart: unless-stopped
+
+  # PostgreSQL Exporter for Postgres metrics
+  postgres_exporter:
+    image: prometheuscommunity/postgres-exporter:v0.20.1
+    container_name: customer_support_postgres_exporter
+    # measured ~22M.
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+        reservations:
+          memory: 16m
+    ports:
+      - "127.0.0.1:9187:9187"
+    environment:
+      # The APP's database, not the `postgres` maintenance one: per-database
+      # collectors (table sizes, row counts, index usage) report on whatever they are
+      # connected to, and pointing them at `postgres` makes them describe an empty
+      # database while the real one goes unmeasured.
+      - DATA_SOURCE_URI=pgvector:5432/${POSTGRES_MAIN_DATABASE}?sslmode=disable
+      - DATA_SOURCE_USER=${POSTGRES_USERNAME}
+      - DATA_SOURCE_PASS=${POSTGRES_PASSWORD}
+    depends_on:
+      pgvector:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: unless-stopped
+
 networks:
   backend: {}
 
 volumes:
   pgdata:
   assets:
+  qdrant_data:
+  prometheus_data:
+  grafana_data:

@@ -28,6 +28,15 @@ print(f"  {host}:{port} never came up", file=sys.stderr)
 sys.exit(1)
 PY
 
+# Stale mmap files describe workers from a previous run. Left in place they would be
+# summed into every scrape, so counters would appear to jump on restart and never
+# come back down.
+if [ -n "$PROMETHEUS_MULTIPROC_DIR" ]; then
+    echo "clearing prometheus multiprocess dir: $PROMETHEUS_MULTIPROC_DIR"
+    mkdir -p "$PROMETHEUS_MULTIPROC_DIR"
+    rm -f "$PROMETHEUS_MULTIPROC_DIR"/*.db
+fi
+
 echo "applying migrations..."
 alembic upgrade head
 

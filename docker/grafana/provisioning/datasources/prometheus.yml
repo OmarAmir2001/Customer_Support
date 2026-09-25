@@ -1,0 +1,18 @@
+# Wires the Prometheus datasource at boot, so a fresh grafana_data volume comes up
+# already working instead of needing someone to click through Settings first.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    # Pinned so dashboards can reference it by a stable uid. Left to Grafana it
+    # would be random per install, and every dashboard JSON would point at nothing.
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    # The compose service name — Grafana queries Prometheus over the backend network,
+    # not through the published loopback port.
+    url: http://prometheus:9090
+    isDefault: true
+    # Lets this file be re-applied on restart rather than colliding with the copy
+    # already saved in the volume.
+    editable: true

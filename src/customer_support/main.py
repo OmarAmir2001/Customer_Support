@@ -32,6 +32,9 @@ from customer_support.stores.llm.LLMProviderFactory import LLMProviderFactory
 from customer_support.stores.llm.templates import TemplateParser
 from customer_support.stores.vectordb.VectorDBProviderFactory import VectorDBProviderFactory
 
+# import metrics setup
+from .utils.metrics import setup_metrics
+
 logger = get_logger(__name__)
 
 
@@ -48,7 +51,20 @@ async def lifespan(app: FastAPI):
             f"postgresql+asyncpg://{settings.POSTGRES_USERNAME}:{settings.POSTGRES_PASSWORD}"
             f"@{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_MAIN_DATABASE}"
         )
-        engine = create_async_engine(dsn, pool_pre_ping=True)  # pre_ping: survive DB restarts
+        # The pool is sized per WORKER, and uvicorn runs several of them, so the real
+        # budget is (pool_size + max_overflow) x workers + one checkpointer connection
+        # each, against Postgres' default max_connections of 100. SQLAlchemy's
+        # defaults (5 + 10) would spend 15 per worker and leave almost nothing for
+        # psql, the exporter or a migration — failing as "too many clients" only
+        # under the load that needs it most. 5 + 5 here is 10 per worker, so the
+        # --workers count in the Dockerfile can change without re-doing this sum:
+        # at the current 4 workers that is 44 of 100.
+        engine = create_async_engine(
+            dsn,
+            pool_pre_ping=True,  # pre_ping: survive DB restarts
+            pool_size=5,
+            max_overflow=5,
+        )
         stack.push_async_callback(engine.dispose)
 
         db_client = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -207,6 +223,7 @@ async def lifespan(app: FastAPI):
 
 settings = get_settings()
 app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION, lifespan=lifespan)
+setup_metrics(app)
 
 app.include_router(base_router)
 app.include_router(profile_router)

@@ -54,6 +54,26 @@ class InvalidTicketTransition(Exception):
         self.requested = requested
 
 
+class ConcurrentTicketUpdate(Exception):
+    """Raised when a ticket moved between the read and the write.
+
+    Distinct from InvalidTicketTransition, and the distinction is the whole point:
+    there, the transition was illegal for the state the ticket is in. Here it was
+    perfectly legal for the state we READ, and another writer got there first.
+
+    Two advisors clicking Claim on the same ticket is ordinary dashboard traffic, not
+    a server fault, so it has to surface as a 409 and a refresh rather than a 500.
+    """
+
+    def __init__(self, ticket_id: int, expected: TicketStatus):
+        super().__init__(
+            f"ticket {ticket_id} was no longer in status {expected.value}; "
+            "another process changed it first"
+        )
+        self.ticket_id = ticket_id
+        self.expected = expected
+
+
 def assert_transition_allowed(
     ticket_id: int, current: TicketStatus, requested: TicketStatus
 ) -> None:
