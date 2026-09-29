@@ -32,7 +32,7 @@ class DataController(BaseController):
         """
         # Generate a random key to ensure uniqueness
         random_key = self.generate_random_string()
-        project_path = ProjectController().get_project_path(project_id=project_id)
+        project_path = ProjectController(self.app_settings).get_project_path(project_id=project_id)
         cleaned_filename = self.get_clean_filename(original_filename)
 
         # Generate a new file path with the random key and cleaned filename
