@@ -1,0 +1,838 @@
+[
+  {
+    "id": "q001",
+    "question": "كم عدد الساعات المعتمدة المطلوبة للحصول على درجة البكالوريوس؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "يحصل الطالب على درجة البكالوريوس متى استوفى ١٣٥ ساعة معتمدة، بشرط ألا يقل معدله التراكمي عن 2.0.",
+    "expected_article": "مادة (٢٤)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "graduation"
+  },
+  {
+    "id": "q002",
+    "question": "How many credit hours are required to graduate with a bachelor's degree?",
+    "language": "en",
+    "department": "CS",
+    "ground_truth": "A student is awarded the bachelor's degree upon completing 135 credit hours, provided their cumulative GPA is not below 2.0.",
+    "expected_article": "مادة (٢٤)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "graduation",
+    "bilingual_pair": "q001"
+  },
+  {
+    "id": "q003",
+    "question": "ما هو الحد الأدنى للمعدل التراكمي المطلوب للتخرج؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "يجب ألا يقل المعدل التراكمي عن 2.0 للحصول على درجة البكالوريوس.",
+    "expected_article": "مادة (٢٤)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "graduation"
+  },
+  {
+    "id": "q004",
+    "question": "ما هو الحد الأدنى للساعات المعتمدة التي يمكن للطالب تسجيلها في الفصل الدراسي؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "الحد الأدنى للساعات المعتمدة في كل فصل دراسي تسع (٩) ساعات، ويجوز التجاوز عن هذا الحد بموافقة مجلس الإدارة في الحالات الاستثنائية مثل التخرج.",
+    "expected_article": "مادة (١٣)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "registration"
+  },
+  {
+    "id": "q005",
+    "question": "What is the minimum number of credit hours a student can register per semester?",
+    "language": "en",
+    "department": "CS",
+    "ground_truth": "The minimum is nine (9) credit hours per semester, which may be waived by the board in exceptional cases such as graduation.",
+    "expected_article": "مادة (١٣)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "registration",
+    "bilingual_pair": "q004"
+  },
+  {
+    "id": "q006",
+    "question": "ما الذي يحدد الحد الأقصى للساعات المعتمدة في الفصل الدراسي؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "الحد الأقصى للساعات المعتمدة في كل فصل دراسي، بخلاف الفصل الأول للطلاب المستجدين، يرتبط بالمعدل التراكمي للطالب وفق جدول محدد في اللائحة.",
+    "expected_article": "مادة (١٤)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "registration"
+  },
+  {
+    "id": "q007",
+    "question": "حتى متى يمكن للطالب الانسحاب من مقرر دراسي؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "يجوز للطالب بعد أسبوعين من بدء الدراسة أن ينسحب من مقرر أو أكثر حتى نهاية الأسبوع السابع من بدء الدراسة، بشرط ألا ينخفض عدد الساعات المسجلة عن الحد الأدنى.",
+    "expected_article": "مادة (١٥)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "withdrawal"
+  },
+  {
+    "id": "q008",
+    "question": "Until when can a student withdraw from a course?",
+    "language": "en",
+    "department": "CS",
+    "ground_truth": "After two weeks from the start of study, a student may withdraw from one or more courses until the end of the seventh week, provided their registered hours do not fall below the minimum.",
+    "expected_article": "مادة (١٥)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "withdrawal",
+    "bilingual_pair": "q007"
+  },
+  {
+    "id": "q009",
+    "question": "ما هي المدة المسموح بها لحذف وإضافة المقررات؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "يجوز للطالب بعد إكمال إجراءات التسجيل أن يحذف ويضيف مقرراً أو أكثر خلال أسبوعين من بدء الدراسة بدون أية التزامات أكاديمية أو مالية.",
+    "expected_article": "مادة (٩)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "registration"
+  },
+  {
+    "id": "q010",
+    "question": "ما هي نسبة الحضور المطلوبة لدخول الامتحان النهائي؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "يحرم من دخول الامتحان النهائي الطالب الذي لم يحضر على الأقل ٧٥٪ من محاضرات وتمارين المقرر، ويعتبر راسباً إلا إذا قدم عذراً مقبولاً.",
+    "expected_article": "مادة (١٩)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "examinations"
+  },
+  {
+    "id": "q011",
+    "question": "What attendance percentage is required to sit the final exam?",
+    "language": "en",
+    "department": "CS",
+    "ground_truth": "A student who has not attended at least 75% of the course lectures and tutorials is barred from the final exam and considered failed, unless an acceptable excuse is presented.",
+    "expected_article": "مادة (١٩)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "examinations",
+    "bilingual_pair": "q010"
+  },
+  {
+    "id": "q012",
+    "question": "ما هي مدة امتحان المقررات؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "زمن الامتحان لجميع المقررات ساعتان.",
+    "expected_article": "مادة (٢٧)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "examinations"
+  },
+  {
+    "id": "q013",
+    "question": "كيف توزع درجات المقرر بين الامتحان النهائي وأعمال الفصل؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "النهاية العظمى لجميع المقررات ١٠٠ درجة، منها ٦٠ درجة للامتحان النهائي و٤٠ درجة لأعمال الفصل.",
+    "expected_article": "مادة (٢٨)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "examinations"
+  },
+  {
+    "id": "q014",
+    "question": "How are course marks divided between the final exam and coursework?",
+    "language": "en",
+    "department": "CS",
+    "ground_truth": "The maximum for all courses is 100 marks: 60 for the final exam and 40 for coursework.",
+    "expected_article": "مادة (٢٨)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "examinations",
+    "bilingual_pair": "q013"
+  },
+  {
+    "id": "q015",
+    "question": "ماذا يحدث إذا تغيب الطالب عن الامتحان النهائي؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "إذا تغيب الطالب عن حضور الامتحان النهائي يعتبر راسباً في المقرر، فإذا تقدم خلال يومين بعذر قهري يقبله مجلس إدارة المعهد يكون له حكم آخر.",
+    "expected_article": "مادة (١٨)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "examinations"
+  },
+  {
+    "id": "q016",
+    "question": "متى يوجه للطالب إنذار أكاديمي ومتى يفصل من المعهد؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "يوجه للطالب إنذار أكاديمي إذا انخفض معدله التراكمي عن 2.0، ويفصل الطالب من المعهد إذا حصل على ٤ إنذارات أكاديمية متتالية أو ٦ متفرقة.",
+    "expected_article": "مادة (٢١)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "academic_standing"
+  },
+  {
+    "id": "q017",
+    "question": "How many academic warnings lead to dismissal from the institute?",
+    "language": "en",
+    "department": "CS",
+    "ground_truth": "A student is dismissed after 4 consecutive academic warnings or 6 non-consecutive ones. A warning is issued when the cumulative GPA falls below 2.0.",
+    "expected_article": "مادة (٢١)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "academic_standing",
+    "bilingual_pair": "q016"
+  },
+  {
+    "id": "q018",
+    "question": "ما هي شروط التدريب الصيفي؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "يؤدي كل طالب، بعد استيفاء ٣٠ ساعة معتمدة على الأقل، تدريباً صيفياً داخلياً أو خارجياً في الموضوعات التي يحددها مجلس إدارة المعهد، مرتين خلال دراسته.",
+    "expected_article": "مادة (٢٢)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "training"
+  },
+  {
+    "id": "q019",
+    "question": "How many times must a student complete summer training, and after how many credit hours?",
+    "language": "en",
+    "department": "CS",
+    "ground_truth": "Summer training is completed twice during the course of study, and may begin after the student has completed at least 30 credit hours.",
+    "expected_article": "مادة (٢٢)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "training",
+    "bilingual_pair": "q018"
+  },
+  {
+    "id": "q020",
+    "question": "متى يقدم الطالب مشروع التخرج؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "يقدم الطالب مشروع التخرج في نهاية دراسته بالمعهد، بعد استيفاء ٧٠٪ على الأقل من الساعات المطلوبة للتخرج.",
+    "expected_article": "مادة (٢٣)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "graduation"
+  },
+  {
+    "id": "q021",
+    "question": "After what percentage of credit hours can a student start the graduation project?",
+    "language": "en",
+    "department": "CS",
+    "ground_truth": "The graduation project is submitted at the end of study, after completing at least 70% of the credit hours required for graduation.",
+    "expected_article": "مادة (٢٣)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "graduation",
+    "bilingual_pair": "q020"
+  },
+  {
+    "id": "q022",
+    "question": "ما هي لغة الدراسة في المعهد؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "لغة الدراسة في المعهد هي اللغة الإنجليزية أو العربية وفقاً لطبيعة المقرر الدراسي، على أن يكون الامتحان بنفس لغة التدريس.",
+    "expected_article": "مادة (٥)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "general"
+  },
+  {
+    "id": "q023",
+    "question": "What is the language of instruction at the institute?",
+    "language": "en",
+    "department": "CS",
+    "ground_truth": "Instruction is in English or Arabic depending on the nature of the course, and the exam must be in the same language as the teaching.",
+    "expected_article": "مادة (٥)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "general",
+    "bilingual_pair": "q022"
+  },
+  {
+    "id": "q024",
+    "question": "ما هي شروط القبول في المعهد؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "يقبل المعهد الطلاب الحاصلين على الثانوية العامة شعبة علمي (علوم أو رياضيات) حسب القواعد المنظمة التي تضعها الجهات المختصة.",
+    "expected_article": "مادة (١)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "admission"
+  },
+  {
+    "id": "q025",
+    "question": "What are the admission requirements for the institute?",
+    "language": "en",
+    "department": "CS",
+    "ground_truth": "The institute admits students holding the general secondary certificate in the scientific track (science or mathematics), according to the rules set by the competent authorities.",
+    "expected_article": "مادة (١)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "admission",
+    "bilingual_pair": "q024"
+  },
+  {
+    "id": "q026",
+    "question": "كم مرة يجوز للطالب التحويل من برنامج دراسي إلى آخر؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "يجوز للطالب التحويل من برنامج دراسي إلى آخر بعد إجراء مقاصة علمية للمقررات، بحد أقصى مرتين خلال فترة دراسته بالبرنامج.",
+    "expected_article": "مادة (٣)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "transfer"
+  },
+  {
+    "id": "q027",
+    "question": "ما هو الحد الأقصى لعدد الفصول الدراسية التي يمكن وقف قيد الطالب فيها؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "يجوز لمجلس إدارة المعهد أن يوقف قيد الطالب لفصل دراسي أو أكثر بحد أقصى ٤ فصول دراسية، إذا تقدم بعذر مقبول يمنعه من الانتظام بالدراسة.",
+    "expected_article": "مادة (١٠)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "registration"
+  },
+  {
+    "id": "q028",
+    "question": "For how many semesters can a student's enrolment be suspended?",
+    "language": "en",
+    "department": "CS",
+    "ground_truth": "The board may suspend a student's enrolment for one or more semesters, up to a maximum of 4 semesters, given an acceptable excuse preventing regular attendance.",
+    "expected_article": "مادة (١٠)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "registration",
+    "bilingual_pair": "q027"
+  },
+  {
+    "id": "q029",
+    "question": "كم عدد الساعات المعتمدة للمقررات غير الإنسانية؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "جميع المقررات غير الإنسانية ٣ ساعات معتمدة، عبارة عن ساعتين من المحاضرات وساعتين من العملي أو التمارين تحتسب ساعة معتمدة واحدة.",
+    "expected_article": "مادة (٢٥)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "courses"
+  },
+  {
+    "id": "q030",
+    "question": "كم عدد الساعات المعتمدة للمقررات الإنسانية؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "جميع المقررات الإنسانية ٢ ساعة معتمدة، عبارة عن ساعتين من المحاضرات.",
+    "expected_article": "مادة (٢٦)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "courses"
+  },
+  {
+    "id": "q031",
+    "question": "هل يجوز للطالب إعادة مقرر لتحسين تقديره؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "يجوز للطالب إعادة نفس المقرر أي عدد من المرات، سواء بسبب رسوبه أو رغبته في تحسين تقديره التراكمي، وتحسب الدرجة وفق القواعد المذكورة في اللائحة.",
+    "expected_article": "مادة (٢٠)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "courses"
+  },
+  {
+    "id": "q032",
+    "question": "Can a student repeat a course to improve their GPA?",
+    "language": "en",
+    "department": "CS",
+    "ground_truth": "A student may repeat the same course any number of times, whether due to failure or to improve their cumulative GPA, with the resulting grade counted according to the regulations.",
+    "expected_article": "مادة (٢٠)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "courses",
+    "bilingual_pair": "q031"
+  },
+  {
+    "id": "q033",
+    "question": "ما هي أنواع المقررات الدراسية؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "تنقسم المقررات إلى نوعين: مقررات إجبارية ومقررات اختيارية، ويجوز أن يكون للمقرر متطلب سابق.",
+    "expected_article": "مادة (١٦)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "courses"
+  },
+  {
+    "id": "q034",
+    "question": "هل يوجد مرشد أكاديمي للطالب؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "يحدد المعهد لكل طالب مرشداً أكاديمياً من أعضاء هيئة التدريس يقوم بنصحه ومساعدته في اختياراته الأكاديمية، والطالب هو المسئول في النهاية عن اختياراته.",
+    "expected_article": "مادة (٦)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "advising"
+  },
+  {
+    "id": "q035",
+    "question": "Does each student get an academic advisor?",
+    "language": "en",
+    "department": "CS",
+    "ground_truth": "The institute assigns each student an academic advisor from the faculty to advise and assist with academic choices, though the student is ultimately responsible for their own choices.",
+    "expected_article": "مادة (٦)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "advising",
+    "bilingual_pair": "q034"
+  },
+  {
+    "id": "q036",
+    "question": "هل يسمح النظام بالتعليم عن بعد أو المقررات الإلكترونية؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "يسمح النظام الدراسي بتدريس بعض المقررات الإلكترونية عن طريق الإنترنت أو الفيديو كونفرنس أو أي وسيلة من وسائل التعليم عن بعد أو التعليم الهجين، بشرط موافقة مجلس إدارة المعهد ووزارة التعليم العالي.",
+    "expected_article": "مادة (٧)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "general"
+  },
+  {
+    "id": "q037",
+    "question": "ماذا يحدث إذا لم يحضر الطالب للتسجيل في أول أسبوعين؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "الطالب الذي لم يحضر للتسجيل حتى أول أسبوعين من بدء الفصل الدراسي، ولم يتقدم بطلب وقف قيده أو بعذر مقبول، يحرم من التسجيل في هذا الفصل ويصدر له إنذار أكاديمي.",
+    "expected_article": "مادة (١١)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "registration"
+  },
+  {
+    "id": "q038",
+    "question": "هل يمكن التسجيل في مقرر ومتطلبه السابق في نفس الفصل؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "يجوز لمجلس إدارة المعهد التجاوز عن شرط اجتياز المتطلب السابق، فيسمح للطالب بالتسجيل للمقرر ومتطلبه معاً في نفس الفصل، وذلك في الظروف الاستثنائية فقط.",
+    "expected_article": "مادة (١٧)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "courses"
+  },
+  {
+    "id": "q039",
+    "question": "كيف يتم حساب التقدير الحرفي والرقمي للمقرر؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "يحصل الطالب على تقدير رقمي وتقدير حرفي في أي مقرر بناءً على الدرجة التي يحصل عليها، طبقاً للجدول الموضح في اللائحة.",
+    "expected_article": "مادة (١٢)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "grading"
+  },
+  {
+    "id": "q040",
+    "question": "متى يعلن المعهد قائمة المقررات المتاحة للتسجيل؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "قبل بداية أي فصل دراسي بأسبوع على الأقل يعلن المعهد قائمة المقررات التي سوف يتم تدريسها في هذا الفصل ويفتح باب التسجيل فيها.",
+    "expected_article": "مادة (٨)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "registration"
+  },
+  {
+    "id": "q041",
+    "question": "ما هي الدرجة التي يمنحها المعهد لطلاب علوم الحاسب؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "يمنح المعهد درجة بكالوريوس علوم الحاسب، وتندرج تحتها التخصصات الدقيقة المرخص بها للمعهد.",
+    "expected_article": "مادة (٤)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "degree",
+    "discriminates_department": true,
+    "note": "CS-only. The IS handbook's same article says نظم المعلومات — so retrieving the wrong source gives a confidently wrong answer."
+  },
+  {
+    "id": "q042",
+    "question": "ما هي الدرجة التي يمنحها المعهد لطلاب نظم المعلومات؟",
+    "language": "ar",
+    "department": "IS",
+    "ground_truth": "يمنح المعهد درجة بكالوريوس نظم المعلومات، وتندرج تحتها التخصصات الدقيقة المرخص بها للمعهد.",
+    "expected_article": "مادة (٤)",
+    "expected_sources": [
+      "IS_2023"
+    ],
+    "answerable": true,
+    "category": "degree",
+    "discriminates_department": true,
+    "note": "The mirror of q041. Together they are the sharpest test of the department filter in the whole set."
+  },
+  {
+    "id": "q043",
+    "question": "Which degree does the institute award to Computer Science students?",
+    "language": "en",
+    "department": "CS",
+    "ground_truth": "The institute awards a Bachelor of Computer Science, under which the licensed specialisations fall.",
+    "expected_article": "مادة (٤)",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "degree",
+    "discriminates_department": true,
+    "bilingual_pair": "q041"
+  },
+  {
+    "id": "q044",
+    "question": "كم عدد ساعات المقررات الإجبارية في برنامج نظم المعلومات؟",
+    "language": "ar",
+    "department": "IS",
+    "ground_truth": "المقررات الإجبارية في برنامج بكالوريوس نظم المعلومات إجماليها ١١٤ ساعة معتمدة.",
+    "expected_article": "أولاً: المقررات الإجبارية",
+    "expected_sources": [
+      "IS_2023"
+    ],
+    "answerable": true,
+    "category": "curriculum",
+    "discriminates_department": true
+  },
+  {
+    "id": "q045",
+    "question": "كم عدد ساعات المقررات الاختيارية في برنامج نظم المعلومات؟",
+    "language": "ar",
+    "department": "IS",
+    "ground_truth": "المقررات الاختيارية في برنامج بكالوريوس نظم المعلومات إجماليها ٢١ ساعة معتمدة.",
+    "expected_article": "ثانياً: المقررات الاختيارية",
+    "expected_sources": [
+      "IS_2023"
+    ],
+    "answerable": true,
+    "category": "curriculum",
+    "discriminates_department": true
+  },
+  {
+    "id": "q046",
+    "question": "ما هي أقسام المعهد العلمية؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "يحدد قسم أقسام المعهد العلمية في اللائحة الأقسام المتاحة بالمعهد وتخصصاتها.",
+    "expected_article": "أقسام المعهد العلمية",
+    "expected_sources": [
+      "CS_2023"
+    ],
+    "answerable": true,
+    "category": "general",
+    "needs_review": true,
+    "note": "Ground truth is vague because the section is long and lists many departments. Tighten it against the handbook before trusting the faithfulness score on this one."
+  },
+  {
+    "id": "q047",
+    "question": "كم تكلفة تصريح انتظار السيارات للطلاب؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "",
+    "expected_article": null,
+    "expected_sources": [],
+    "answerable": false,
+    "category": "out_of_scope",
+    "note": "Parking is not covered by the regulations. The correct behaviour is escalation, not an answer."
+  },
+  {
+    "id": "q048",
+    "question": "How much does a student parking permit cost?",
+    "language": "en",
+    "department": "CS",
+    "ground_truth": "",
+    "expected_article": null,
+    "expected_sources": [],
+    "answerable": false,
+    "category": "out_of_scope",
+    "bilingual_pair": "q047"
+  },
+  {
+    "id": "q049",
+    "question": "ما هو منيو الكافتيريا اليوم؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "",
+    "expected_article": null,
+    "expected_sources": [],
+    "answerable": false,
+    "category": "out_of_scope"
+  },
+  {
+    "id": "q050",
+    "question": "من هو رئيس المعهد الحالي؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "",
+    "expected_article": null,
+    "expected_sources": [],
+    "answerable": false,
+    "category": "out_of_scope",
+    "note": "Named people are not in the regulations. A plausible-sounding hallucinated name is the worst failure mode here."
+  },
+  {
+    "id": "q051",
+    "question": "What is the wifi password for the labs?",
+    "language": "en",
+    "department": "CS",
+    "ground_truth": "",
+    "expected_article": null,
+    "expected_sources": [],
+    "answerable": false,
+    "category": "out_of_scope"
+  },
+  {
+    "id": "q052",
+    "question": "هل يمكنني الحصول على منحة دراسية كاملة؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "",
+    "expected_article": null,
+    "expected_sources": [],
+    "answerable": false,
+    "category": "out_of_scope",
+    "note": "Scholarships are not in this regulation. Tempting to answer from general knowledge, which is exactly what must not happen."
+  },
+  {
+    "id": "q053",
+    "question": "ما هي مواعيد المحاضرات غداً؟",
+    "language": "ar",
+    "department": "CS",
+    "ground_truth": "",
+    "expected_article": null,
+    "expected_sources": [],
+    "answerable": false,
+    "category": "out_of_scope",
+    "note": "Timetables are operational data, not regulation. The handbook says only that the course list is published a week before the semester."
+  },
+  {
+    "id": "q054",
+    "question": "How do I appeal a grade I disagree with?",
+    "language": "en",
+    "department": "CS",
+    "ground_truth": "",
+    "expected_article": null,
+    "expected_sources": [],
+    "answerable": false,
+    "category": "out_of_scope",
+    "needs_review": true,
+    "note": "Borderline. The regulations cover absence excuses and repeating courses but not an appeals process. If the handbook does describe one, move this to answerable."
+  },
+  {
+    "id": "q055",
+    "question": "كم عدد الساعات المعتمدة المطلوبة للحصول على درجة البكالوريوس؟",
+    "language": "ar",
+    "department": "IS",
+    "ground_truth": "يحصل الطالب على درجة البكالوريوس متى استوفى ١٣٥ ساعة معتمدة، بشرط ألا يقل معدله التراكمي عن 2.0.",
+    "expected_article": "مادة (٢٤)",
+    "expected_sources": [
+      "IS_2023"
+    ],
+    "answerable": true,
+    "category": "graduation",
+    "mirrors": "q001",
+    "note": "Same fact as q001, asked as an IS student. The answer is identical in both handbooks; only the citation should differ. A wrong source here means the department filter leaked."
+  },
+  {
+    "id": "q056",
+    "question": "ما هو الحد الأدنى للساعات المعتمدة التي يمكن للطالب تسجيلها في الفصل الدراسي؟",
+    "language": "ar",
+    "department": "IS",
+    "ground_truth": "الحد الأدنى للساعات المعتمدة في كل فصل دراسي تسع (٩) ساعات، ويجوز التجاوز عن هذا الحد بموافقة مجلس الإدارة في الحالات الاستثنائية مثل التخرج.",
+    "expected_article": "مادة (١٣)",
+    "expected_sources": [
+      "IS_2023"
+    ],
+    "answerable": true,
+    "category": "registration",
+    "mirrors": "q004",
+    "note": "Same fact as q004, asked as an IS student. The answer is identical in both handbooks; only the citation should differ. A wrong source here means the department filter leaked."
+  },
+  {
+    "id": "q057",
+    "question": "حتى متى يمكن للطالب الانسحاب من مقرر دراسي؟",
+    "language": "ar",
+    "department": "IS",
+    "ground_truth": "يجوز للطالب بعد أسبوعين من بدء الدراسة أن ينسحب من مقرر أو أكثر حتى نهاية الأسبوع السابع من بدء الدراسة، بشرط ألا ينخفض عدد الساعات المسجلة عن الحد الأدنى.",
+    "expected_article": "مادة (١٥)",
+    "expected_sources": [
+      "IS_2023"
+    ],
+    "answerable": true,
+    "category": "withdrawal",
+    "mirrors": "q007",
+    "note": "Same fact as q007, asked as an IS student. The answer is identical in both handbooks; only the citation should differ. A wrong source here means the department filter leaked."
+  },
+  {
+    "id": "q058",
+    "question": "ما هي نسبة الحضور المطلوبة لدخول الامتحان النهائي؟",
+    "language": "ar",
+    "department": "IS",
+    "ground_truth": "يحرم من دخول الامتحان النهائي الطالب الذي لم يحضر على الأقل ٧٥٪ من محاضرات وتمارين المقرر، ويعتبر راسباً إلا إذا قدم عذراً مقبولاً.",
+    "expected_article": "مادة (١٩)",
+    "expected_sources": [
+      "IS_2023"
+    ],
+    "answerable": true,
+    "category": "examinations",
+    "mirrors": "q010",
+    "note": "Same fact as q010, asked as an IS student. The answer is identical in both handbooks; only the citation should differ. A wrong source here means the department filter leaked."
+  },
+  {
+    "id": "q059",
+    "question": "متى يوجه للطالب إنذار أكاديمي ومتى يفصل من المعهد؟",
+    "language": "ar",
+    "department": "IS",
+    "ground_truth": "يوجه للطالب إنذار أكاديمي إذا انخفض معدله التراكمي عن 2.0، ويفصل الطالب من المعهد إذا حصل على ٤ إنذارات أكاديمية متتالية أو ٦ متفرقة.",
+    "expected_article": "مادة (٢١)",
+    "expected_sources": [
+      "IS_2023"
+    ],
+    "answerable": true,
+    "category": "academic_standing",
+    "mirrors": "q016",
+    "note": "Same fact as q016, asked as an IS student. The answer is identical in both handbooks; only the citation should differ. A wrong source here means the department filter leaked."
+  },
+  {
+    "id": "q060",
+    "question": "ما هي شروط التدريب الصيفي؟",
+    "language": "ar",
+    "department": "IS",
+    "ground_truth": "يؤدي كل طالب، بعد استيفاء ٣٠ ساعة معتمدة على الأقل، تدريباً صيفياً داخلياً أو خارجياً في الموضوعات التي يحددها مجلس إدارة المعهد، مرتين خلال دراسته.",
+    "expected_article": "مادة (٢٢)",
+    "expected_sources": [
+      "IS_2023"
+    ],
+    "answerable": true,
+    "category": "training",
+    "mirrors": "q018",
+    "note": "Same fact as q018, asked as an IS student. The answer is identical in both handbooks; only the citation should differ. A wrong source here means the department filter leaked."
+  },
+  {
+    "id": "q061",
+    "question": "متى يقدم الطالب مشروع التخرج؟",
+    "language": "ar",
+    "department": "IS",
+    "ground_truth": "يقدم الطالب مشروع التخرج في نهاية دراسته بالمعهد، بعد استيفاء ٧٠٪ على الأقل من الساعات المطلوبة للتخرج.",
+    "expected_article": "مادة (٢٣)",
+    "expected_sources": [
+      "IS_2023"
+    ],
+    "answerable": true,
+    "category": "graduation",
+    "mirrors": "q020",
+    "note": "Same fact as q020, asked as an IS student. The answer is identical in both handbooks; only the citation should differ. A wrong source here means the department filter leaked."
+  },
+  {
+    "id": "q062",
+    "question": "كم عدد الساعات المعتمدة للمقررات غير الإنسانية؟",
+    "language": "ar",
+    "department": "IS",
+    "ground_truth": "جميع المقررات غير الإنسانية ٣ ساعات معتمدة، عبارة عن ساعتين من المحاضرات وساعتين من العملي أو التمارين تحتسب ساعة معتمدة واحدة.",
+    "expected_article": "مادة (٢٥)",
+    "expected_sources": [
+      "IS_2023"
+    ],
+    "answerable": true,
+    "category": "courses",
+    "mirrors": "q029",
+    "note": "Same fact as q029, asked as an IS student. The answer is identical in both handbooks; only the citation should differ. A wrong source here means the department filter leaked."
+  }
+]

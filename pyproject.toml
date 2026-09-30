@@ -31,7 +31,18 @@ dependencies = [
     "cohere>=7.0.8",
     # document loading & chunking
     "langchain-core>=1.0.0",
-    "langchain-community>=0.4.2",
+    # Pinned BELOW 0.4 on purpose, and this pin is load-bearing.
+    #
+    # ragas imports `langchain_community.chat_models.vertexai` at module level, but
+    # declares `langchain-community` with no version bound — so a resolver picks the
+    # newest, 0.4.x emptied its chat_models package as part of being sunset, and
+    # `import ragas` dies with ModuleNotFoundError. 0.3.31 still ships that module and
+    # still accepts langchain-core 1.x, so nothing else has to move.
+    #
+    # Bumping this to 0.4 breaks the RAGAS evaluation harness. We use exactly two
+    # symbols from this package (PyMuPDFLoader, TextLoader in ProcessController), both
+    # replaceable in ~15 lines — doing that would let the pin go away entirely.
+    "langchain-community>=0.3.31,<0.4",
     "langchain-text-splitters>=1.0.0",
     "pymupdf>=1.28.0",
     "pgvector>=0.5.0",
@@ -54,6 +65,14 @@ dev = [
     "pre-commit>=4.0",
     "locust>=2.32",
     "dvc>=3.67",
+    # Upper bound is deliberate. ragas restructured its metric API in 0.4 and says
+    # the `ragas.metrics` import path is removed in v1.0 (the metrics move to
+    # `ragas.metrics.collections`). Three of the four metrics we need already live
+    # there; answer relevancy (ResponseRelevancy) does not yet, so the harness uses
+    # the older path for all four rather than importing from two places.
+    # Revisit when v1.0 lands — and expect it to break the harness.
+    "ragas>=0.4,<0.5",
+    "datasets>=3.0",
 ]
 notebooks = [
     "jupyter>=1.1.1",
