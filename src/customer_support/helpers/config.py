@@ -57,6 +57,23 @@ class Settings(BaseSettings):
     # EMBEDDING_MODEL_SIZE, or inserts fail against the vector(N) column.
     VECTOR_DB_DEFAULT_VECTOR_SIZE: int = 384
 
+    # --- provider rate limiting ---
+    # A load test found the reason these exist. Groq's free tier caps the judge model
+    # at 8,000 tokens/minute, which was reached at FIVE concurrent users: of 94
+    # questions only 5 were answered, and all 110 failures were 429s. The provider
+    # replies "Please try again in 1.875s" — and the code ignored it, retrying twice
+    # immediately so both retries hit the same limit. Every one of those became an
+    # escalation, because the judges fail closed.
+    #
+    # Honouring the hint converts almost all of that into a short wait.
+    PROVIDER_RATE_LIMIT_MAX_RETRIES: int = 3
+    # Per-sleep ceiling. The provider's hint is trusted only up to this: a bad or
+    # hostile Retry-After must not be able to park a student's request for a minute.
+    PROVIDER_RATE_LIMIT_MAX_WAIT_SECONDS: float = 8.0
+    # Total budget across all retries for ONE call. Three gates run per question, so
+    # an unbounded per-call wait multiplies into a wait the student actually notices.
+    PROVIDER_RATE_LIMIT_TOTAL_BUDGET_SECONDS: float = 12.0
+
     # --- logging ---
     LOG_LEVEL: str = "INFO"
     LOG_JSON: bool = True

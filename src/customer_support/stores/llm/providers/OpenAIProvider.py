@@ -4,6 +4,7 @@ from customer_support.helpers.logging_config import get_logger
 
 from ..LLMEnum import OpenAIEnums
 from ..LLMInterface import LLMInterface
+from ..rate_limit import call_with_rate_limit_retry
 
 
 class OpenAIProvider(LLMInterface):
@@ -14,9 +15,19 @@ class OpenAIProvider(LLMInterface):
         default_input_max_characters: int = 1000,
         default_generation_max_output_tokens: int = 1000,
         default_generation_temperature: float = 0.1,
+        rate_limit_max_retries: int = 3,
+        rate_limit_max_wait: float = 8.0,
+        rate_limit_total_budget: float = 12.0,
     ):
         self.api_key = api_key
         self.api_url = api_url
+
+        # Retry policy for 429s, applied to every call this provider makes. Defaults
+        # match Settings so a provider constructed directly (in a test, or a script)
+        # behaves like the running app rather than with no policy at all.
+        self.rate_limit_max_retries = rate_limit_max_retries
+        self.rate_limit_max_wait = rate_limit_max_wait
+        self.rate_limit_total_budget = rate_limit_total_budget
 
         self.default_input_max_characters = default_input_max_characters
         self.default_generation_max_output_tokens = default_generation_max_output_tokens
@@ -41,6 +52,21 @@ class OpenAIProvider(LLMInterface):
     def process_text(self, text: str):
         return text[: self.default_input_max_characters].strip()
 
+    def _call(self, call, operation: str):
+        """Every SDK call goes through here, so no call site can forget the policy.
+
+        Only rate limits are retried; everything else propagates untouched, which
+        leaves each caller's own error handling — including the judges' fail-closed
+        path — behaving exactly as before.
+        """
+        return call_with_rate_limit_retry(
+            call,
+            operation=operation,
+            max_retries=self.rate_limit_max_retries,
+            max_wait=self.rate_limit_max_wait,
+            total_budget=self.rate_limit_total_budget,
+        )
+
     def generate_text(
         self,
         prompt: str,
@@ -64,11 +90,14 @@ class OpenAIProvider(LLMInterface):
         chat_history = chat_history or []
         messages = chat_history + [self.construct_prompt(prompt, OpenAIEnums.USER.value)]
 
-        response = self.client.chat.completions.create(
-            model=self.generation_model_id,
-            messages=messages,
-            max_tokens=max_output_tokens,
-            temperature=temperature,
+        response = self._call(
+            lambda: self.client.chat.completions.create(
+                model=self.generation_model_id,
+                messages=messages,
+                max_tokens=max_output_tokens,
+                temperature=temperature,
+            ),
+            operation="generate_text",
         )
         if (
             not response
@@ -112,14 +141,19 @@ class OpenAIProvider(LLMInterface):
             messages.append({"role": OpenAIEnums.SYSTEM.value, "content": system_prompt})
         messages.append({"role": OpenAIEnums.USER.value, "content": prompt})
 
-        response = self.client.chat.completions.create(
-            model=self.generation_model_id,
-            messages=messages,
-            max_tokens=max_output_tokens or self.default_generation_max_output_tokens,
-            temperature=(
-                temperature if temperature is not None else self.default_generation_temperature
+        response = self._call(
+            lambda: self.client.chat.completions.create(
+                model=self.generation_model_id,
+                messages=messages,
+                max_tokens=max_output_tokens or self.default_generation_max_output_tokens,
+                temperature=(
+                    temperature if temperature is not None else self.default_generation_temperature
+                ),
+                response_format={"type": "json_object"},  # Groq supports this
             ),
-            response_format={"type": "json_object"},  # Groq supports this
+            # The judge path — the one the load test showed collapsing into
+            # escalations under a 429.
+            operation="generate_json",
         )
         if not response or not response.choices or not response.choices[0].message:
             self.logger.error(
@@ -150,7 +184,10 @@ class OpenAIProvider(LLMInterface):
                 model=self.embedding_model_id,
             )
             return None
-        response = self.client.embeddings.create(model=self.embedding_model_id, input=text)
+        response = self._call(
+            lambda: self.client.embeddings.create(model=self.embedding_model_id, input=text),
+            operation="embed_text",
+        )
         if (
             not response
             or not response.data
