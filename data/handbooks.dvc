@@ -1,0 +1,6 @@
+outs:
+- md5: 8b38f0c4e6564a31d6a0bde342b087f5.dir
+  size: 151625
+  nfiles: 2
+  hash: md5
+  path: handbooks
