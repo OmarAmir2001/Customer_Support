@@ -38,3 +38,21 @@ stages:
       # DVC owns this path now. It was git-tracked before, which cannot stand —
       # a file cannot have two owners, and git would keep resurrecting the old one.
       - data/corpus
+
+  index:
+    # The expensive half, deliberately a separate stage.
+    #
+    # Embedding costs Cohere calls and needs a running Postgres; chunking costs
+    # nothing and needs neither. Splitting them means a chunking experiment can
+    # re-run build_corpus freely, and `dvc repro build_corpus` skips this entirely.
+    #
+    # It has no `outs`: the output is rows in pgvector, which DVC cannot track or
+    # restore. That makes this a side-effecting stage — `dvc repro` will re-run it
+    # whenever the corpus changes, which is exactly the trigger we want, but DVC
+    # cannot tell you whether the database currently matches. The sync is idempotent,
+    # so re-running is always safe.
+    cmd: uv run --extra dev python scripts/index_corpus.py
+    deps:
+      - data/corpus
+      - scripts/index_corpus.py
+    always_changed: false

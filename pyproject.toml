@@ -73,6 +73,9 @@ dev = [
     # Revisit when v1.0 lands — and expect it to break the harness.
     "ragas>=0.4,<0.5",
     "datasets>=3.0",
+    # Keep in step with the mlflow server image in docker/docker-compose.yml.
+    # The 3.x API differs from the 2.x one most tutorials show.
+    "mlflow>=3.16,<4",
 ]
 notebooks = [
     "jupyter>=1.1.1",
