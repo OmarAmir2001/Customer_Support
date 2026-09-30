@@ -151,3 +151,11 @@ Thumbs.db
 lab
 /assets/
 alembic.ini
+
+# --- private working notes ---
+# Operational runbook and planning docs. Not committed: the README carries what a
+# reviewer needs, while these carry local specifics and what is still missing.
+RUNBOOK.md
+FINAL_PROJECT_PLAN.md
+AI_HANDOFF.md
+notes/

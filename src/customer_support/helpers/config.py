@@ -57,6 +57,22 @@ class Settings(BaseSettings):
     # EMBEDDING_MODEL_SIZE, or inserts fail against the vector(N) column.
     VECTOR_DB_DEFAULT_VECTOR_SIZE: int = 384
 
+    # --- offline evaluation ---
+    # Which model RAGAS uses to judge. Defaults to the generation model rather than
+    # the judge model on purpose: RAGAS makes several calls per metric per question,
+    # and the judge model is the one already capped at 8,000 TPM. Pointing both at it
+    # would make an evaluation run starve the thing it is evaluating.
+    RAGAS_MODEL_ID: str | None = None
+    # RAGAS runs its metric jobs concurrently and defaults to 16 workers. Against a
+    # free tier capped at 8,000 tokens/minute that produced a wall of TimeoutErrors
+    # and a `nan` for one whole metric — every job for it failed.
+    #
+    # Note RAGAS does NOT go through this project's provider, so the retry policy in
+    # stores/llm/rate_limit.py does not protect it. Concurrency control here is the
+    # only lever. Raise it on a paid tier.
+    RAGAS_MAX_WORKERS: int = 2
+    RAGAS_TIMEOUT_SECONDS: int = 300
+
     # --- provider rate limiting ---
     # A load test found the reason these exist. Groq's free tier caps the judge model
     # at 8,000 tokens/minute, which was reached at FIVE concurrent users: of 94
