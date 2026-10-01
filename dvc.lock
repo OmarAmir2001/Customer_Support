@@ -27,3 +27,15 @@ stages:
       md5: 5d9692b4a1a99fc6ea9e66a204415c3c.dir
       size: 267513
       nfiles: 2
+  index:
+    cmd: uv run --extra dev python scripts/index_corpus.py
+    deps:
+    - path: data/corpus
+      hash: md5
+      md5: 5d9692b4a1a99fc6ea9e66a204415c3c.dir
+      size: 267513
+      nfiles: 2
+    - path: scripts/index_corpus.py
+      hash: md5
+      md5: 91d0b5c568e02e8352e1c17c6e9af04b
+      size: 7095
