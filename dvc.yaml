@@ -1,0 +1,58 @@
+# The reproducible corpus pipeline.
+#
+#   uv run --extra dev dvc repro          # rebuild only what changed
+#   uv run --extra dev dvc repro --force  # rebuild regardless
+#   uv run --extra dev dvc dag            # show the stage graph
+#
+# What this buys that a README instruction does not: `dvc repro` knows whether the
+# corpus on disk actually corresponds to the handbooks, the parameters and the
+# chunking code currently checked out. A stale corpus is invisible otherwise — it
+# still loads, still embeds, still answers, just from the wrong text.
+
+stages:
+  build_corpus:
+    # Free and deterministic: no model calls, no database. That is what makes it
+    # cheap to re-run across a parameter sweep.
+    cmd: >-
+      uv run --extra dev python scripts/build_corpus.py
+      --chunk-size ${corpus.chunk_size}
+      --overlap ${corpus.overlap}
+
+    deps:
+      # The raw input, DVC-tracked rather than git-tracked.
+      - data/handbooks
+      - scripts/build_corpus.py
+      # The chunking itself lives here, and the script deliberately reuses it rather
+      # than reimplementing it. So an edit to this controller changes the corpus, and
+      # DVC has to know that or it will happily report a stale corpus as up to date.
+      - src/customer_support/controllers/ProcessController.py
+
+    params:
+      - corpus.chunk_size
+      - corpus.overlap
+
+    outs:
+      # The whole directory: corpus.json plus manifest.json, which carries the
+      # content hash that later identifies which corpus produced a metric.
+      #
+      # DVC owns this path now. It was git-tracked before, which cannot stand —
+      # a file cannot have two owners, and git would keep resurrecting the old one.
+      - data/corpus
+
+  index:
+    # The expensive half, deliberately a separate stage.
+    #
+    # Embedding costs Cohere calls and needs a running Postgres; chunking costs
+    # nothing and needs neither. Splitting them means a chunking experiment can
+    # re-run build_corpus freely, and `dvc repro build_corpus` skips this entirely.
+    #
+    # It has no `outs`: the output is rows in pgvector, which DVC cannot track or
+    # restore. That makes this a side-effecting stage — `dvc repro` will re-run it
+    # whenever the corpus changes, which is exactly the trigger we want, but DVC
+    # cannot tell you whether the database currently matches. The sync is idempotent,
+    # so re-running is always safe.
+    cmd: uv run --extra dev python scripts/index_corpus.py
+    deps:
+      - data/corpus
+      - scripts/index_corpus.py
+    always_changed: false

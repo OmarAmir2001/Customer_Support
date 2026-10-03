@@ -161,6 +161,50 @@ services:
       - backend
     restart: unless-stopped
 
+  # MLflow — experiment tracking and the model registry.
+  mlflow:
+    # Pinned to the SAME version as the mlflow client in pyproject.toml. A 3.x
+    # client against a 2.x server is exactly the kind of drift that fails late and
+    # confusingly; when you bump one, bump both.
+    image: ghcr.io/mlflow/mlflow:v3.16.1
+    container_name: customer_support_mlflow
+    ports:
+      # Loopback only, like everything except nginx. MLflow has no authentication of
+      # its own and its UI exposes every parameter and artifact logged.
+      - "127.0.0.1:5000:5000"
+    volumes:
+      # Backing store and artifacts in one named volume. Runs must survive a
+      # container rebuild — an experiment history that resets on `make rebuild` is
+      # not a history.
+      - mlflow_data:/mlflow
+    command: >-
+      mlflow server
+      --host 0.0.0.0 --port 5000
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --artifacts-destination /mlflow/artifacts
+      --serve-artifacts
+      --allowed-hosts "127.0.0.1:5000,localhost:5000,mlflow:5000"
+    # --allowed-hosts is REQUIRED, not optional tuning. MLflow 3.x added a security
+    # middleware that is localhost-only by default, and a request arriving over the
+    # Docker bridge is not localhost from inside the container — /health answers fine
+    # while every real API call dies with "Connection reset by peer". Nothing in the
+    # 2.x documentation mentions it.
+    #
+    # Safe to list these: the published port is bound to 127.0.0.1, so the only
+    # reachable paths are the host's loopback and other containers on this network.
+    # 1.5g, measured rather than guessed. An earlier 768m limit had it sitting at
+    # 750MiB (97.7%) with 22 restarts — MLflow 3.x runs uvicorn with multiple worker
+    # processes and needs considerably more than the 2.x server did.
+    deploy:
+      resources:
+        limits:
+          memory: 1536m
+        reservations:
+          memory: 256m
+    networks:
+      - backend
+    restart: unless-stopped
+
   # Prometheus Monitoring
   prometheus:
     image: prom/prometheus:v3.13.3
@@ -284,6 +328,7 @@ networks:
 
 volumes:
   pgdata:
+  mlflow_data:
   assets:
   qdrant_data:
   prometheus_data:

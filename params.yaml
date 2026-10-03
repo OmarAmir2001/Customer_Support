@@ -1,0 +1,21 @@
+# Chunking parameters, in one place.
+#
+# Read by BOTH dvc.yaml (via ${corpus.chunk_size}) and — once the experiment runner
+# exists — the MLflow runs. One source of truth on purpose: a DVC stage and an MLflow
+# run that disagree about which chunk_size produced a corpus make every recorded
+# metric unattributable, and nothing warns you.
+#
+# DVC watches these values. Change one and `dvc repro` rebuilds the corpus; change
+# nothing and it skips the stage, because the inputs are unchanged.
+corpus:
+  # Max characters before a handbook section is sub-split by the overflow splitter.
+  #
+  # 1000, not the 100 that POST /process still defaults to. At 100 chars nearly every
+  # section is shredded into fragments — the same handbook produces 828 chunks at 100
+  # against 199 at 1000. Which value is actually better for retrieval is the first
+  # MLflow experiment; this is the current best guess, not a measured answer.
+  chunk_size: 1000
+
+  # Overlap applied only when a section overflows. Sections are semantic units, so
+  # most chunks never overlap at all — this matters for the long ones.
+  overlap: 50

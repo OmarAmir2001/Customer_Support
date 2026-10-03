@@ -1,0 +1,41 @@
+schema: '2.0'
+stages:
+  build_corpus:
+    cmd: uv run --extra dev python scripts/build_corpus.py --chunk-size 1000 
+      --overlap 50
+    deps:
+    - path: data/handbooks
+      hash: md5
+      md5: 8b38f0c4e6564a31d6a0bde342b087f5.dir
+      size: 151625
+      nfiles: 2
+    - path: scripts/build_corpus.py
+      hash: md5
+      md5: 8d2898bfcbba94f7d3ebd2b21f7bb90a
+      size: 11590
+    - path: src/customer_support/controllers/ProcessController.py
+      hash: md5
+      md5: da3b38dc2c932066a1e64a0055103426
+      size: 10037
+    params:
+      params.yaml:
+        corpus.chunk_size: 1000
+        corpus.overlap: 50
+    outs:
+    - path: data/corpus
+      hash: md5
+      md5: 712fb9955c91e5c3dac396ac8f33cffb.dir
+      size: 267513
+      nfiles: 2
+  index:
+    cmd: uv run --extra dev python scripts/index_corpus.py
+    deps:
+    - path: data/corpus
+      hash: md5
+      md5: 712fb9955c91e5c3dac396ac8f33cffb.dir
+      size: 267513
+      nfiles: 2
+    - path: scripts/index_corpus.py
+      hash: md5
+      md5: 91d0b5c568e02e8352e1c17c6e9af04b
+      size: 7095

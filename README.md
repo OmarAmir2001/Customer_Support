@@ -113,6 +113,7 @@ Verified end to end against real Postgres and live model calls:
 - ✅ **Human-gated promotion judges** — a generalizability check sets the advisor's checkbox default, and a contradiction check *holds* promotion and flags the handbook for review. Deliberately asymmetric: only the contradiction check can block, because a wrong generalizability call would silently discard good knowledge while a wrong hold is merely visible. Both fail safe, in opposite directions.
 - ✅ **Section-aware chunking** — markdown splits on its own headings, so a chunk's `section` is a real citable path (`... > أحكام وشروط الدراسة > مادة (١٠)`) rather than a character offset.
 - ✅ **Idempotent handbook re-ingest** — `sync_sections` delete-then-inserts per `(source, section)`, so pushing twice replaces rather than duplicates, with no full collection rebuild.
+- ✅ **A reproducible corpus** — `dvc repro` rebuilds it from tracked handbooks and `params.yaml`, deterministically, with eight validation checks that refuse to write a bad corpus. Its content hash is the data version a metric can be attributed to.
 - ✅ **One-command Docker setup** via `make up`, a Locust load profile, and 115 passing tests that need no database.
 - ✅ **Metrics that stay bounded** — Prometheus + Grafana, with request labels keyed on the *route template*. `/api/v1/chat/{thread_id}` is one series; labelling by raw path would mint a permanent series per conversation UUID and grow until Prometheus runs out of memory. Counters are recorded in a `finally`, so unhandled exceptions appear in the error rate instead of vanishing, and the registry is multiprocess-aware because uvicorn runs several workers.
 - ✅ **Metrics that describe *this* system, not a generic web app** — `customer_support_questions_total{outcome,failed_gate,department}` and `customer_support_judge_failures_total{gate}`. The second is the one that matters: because the judges fail closed, a degrading model provider escalates every question while `/chat` keeps returning `200` with normal latency and zero errors. A fail-closed judge produces the *same* gate reason as a genuine low score, so that counter is the only thing in the system that can tell "the provider is down" from "retrieval is bad" — and those need opposite responses.
@@ -134,6 +135,7 @@ Verified end to end against real Postgres and live model calls:
 | Validation              | Pydantic v2 + pydantic-settings                           |
 | API layer               | FastAPI                                                   |
 | Logging                 | structlog (JSON, correlation ids)                         |
+| Data versioning         | DVC — handbooks and derived corpus, `dvc repro` pipeline   |
 | Metrics                 | prometheus-client → Prometheus → Grafana                  |
 | Reverse proxy           | nginx (the only service bound to `0.0.0.0`)               |
 | Packaging               | uv · Python 3.13                                          |
@@ -275,6 +277,46 @@ Running locally is a single process, so `PROMETHEUS_MULTIPROC_DIR` is unset and 
 default in-process registry is used. Only the container sets it, because only the
 container runs multiple workers.
 
+### The corpus, and reproducing it
+
+The handbooks are the raw input, not the corpus. `scripts/build_corpus.py` turns them
+into a structured corpus — one record per handbook section, each carrying a `source`,
+a `department`, a `section` path and a **citation** a student can actually look up.
+
+```bash
+uv run --extra dev dvc repro          # rebuild only if inputs or params changed
+uv run --extra dev dvc repro --force  # rebuild regardless
+uv run --extra dev dvc dag            # show the stage graph
+```
+
+`data/handbooks/` and `data/corpus/` are tracked by **DVC**, not git — a file cannot
+have two owners, and git would keep resurrecting a stale copy. `data/handbooks.dvc`
+and `dvc.lock` are the committed pointers.
+
+**Chunking parameters live in `params.yaml`**, read by both the DVC stage and (later)
+the MLflow experiment runner, so the two can never disagree about which configuration
+produced a given corpus. DVC watches those values: change `chunk_size` and `dvc repro`
+rebuilds; change nothing and it skips the stage.
+
+Three properties are deliberate and verified:
+
+- **Deterministic.** Two forced rebuilds produce the same `content_sha256`. That hash
+  is the corpus *version*, which is what lets a metric be attributed to the exact data
+  that produced it rather than to a timestamp.
+- **Validated before it is written.** Eight checks run first — empty text, unknown
+  source, missing department, unlabelled section, oversized chunk, duplicate id, and
+  a handbook that contributed nothing. A failing build writes **nothing at all**,
+  because a parsing bug is silent here and becomes a hallucination three steps later.
+- **Shared with the API.** The script reuses `ProcessController.process_file_content`
+  rather than reimplementing the splitting, so the two cannot drift. At the same
+  `chunk_size`, both produce 97 chunks for `CS_2023` — which is checked, not assumed.
+
+> **A remote is not configured in this repo.** The DVC remote is intentionally in
+> `.dvc/config.local`, which is gitignored: it points at a path on one machine, and
+> shipping it would hand a reviewer a broken remote. Configure your own before
+> `dvc pull` will work on a fresh clone —
+> `dvc remote add -d storage <url>` with Google Drive or S3.
+
 ### Loading the knowledge base
 
 ```bash
@@ -367,7 +409,10 @@ src/customer_support/
     llm/                     # LLMInterface + OpenAI/Groq and Cohere providers
     vectordb/                # VectorDBInterface + pgvector and Qdrant providers
 migrations/                  # Alembic (ignores LangGraph's own checkpoint tables)
-data/handbooks/              # CS_2023.md, IS_2023.md — the ingestion input
+data/handbooks/              # CS_2023.md, IS_2023.md — DVC-tracked raw input
+data/corpus/                 # derived corpus + manifest — a DVC stage output
+dvc.yaml  params.yaml        # the reproducible pipeline and its parameters
+scripts/build_corpus.py      # raw handbooks -> validated, citable corpus
 handbook/                    # the original scanned PDFs, archival source of truth
 docker/                      # Dockerfile, compose file, entrypoint, monitoring config
   Dockerfile                 # built with the REPO ROOT as context

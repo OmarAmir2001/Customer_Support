@@ -32,11 +32,18 @@ HANDBOOK_DEPARTMENTS = {
 
 
 class ProcessController(BaseController):
-    def __init__(self, project_id: str):
-        super().__init__()
+    def __init__(self, project_id: str, settings=None):
+        # settings is injectable like every other controller. It was not, which made
+        # this the one controller a test could not construct without a real .env —
+        # and chunking is the piece most worth testing offline.
+        super().__init__(settings)
 
         self.project_id = project_id
-        self.project_path = ProjectController().get_project_path(project_id=project_id)
+        # Pass settings down: constructing ProjectController() bare would resolve
+        # real Settings again and discard whatever this controller was given.
+        self.project_path = ProjectController(self.app_settings).get_project_path(
+            project_id=project_id
+        )
         self.logger = get_logger(__name__)
 
     def identify_handbook(self, file_id: str):
