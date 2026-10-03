@@ -4,6 +4,7 @@
     uv run --extra dev python scripts/run_experiment.py --dry-run
     uv run --extra dev python scripts/run_experiment.py --limit 20
     uv run --extra dev python scripts/run_experiment.py --limit 20 --register
+    uv run --extra dev python scripts/run_experiment.py --retrieval-only --register
 
 One MLflow run per chunking configuration. Each one:
 
@@ -63,6 +64,12 @@ GRID = [
 #: reads a little awkwardly is recoverable, an ungrounded one is not.
 PRIMARY_METRIC = "faithfulness"
 
+#: The metric promotion is decided on when --retrieval-only is set. No generator and no
+#: judge are involved, so the number is deterministic: two identical runs agree exactly.
+#: It is lexical and it rewards bigger chunks, which is why mean_context_chars is logged
+#: beside it. Read the pair, not the winner alone.
+RETRIEVAL_METRIC = "ground_truth_token_recall"
+
 REGISTERED_MODEL = "HandbookRetrieval"
 
 
@@ -81,7 +88,29 @@ def corpus_manifest() -> dict:
     return json.loads((CORPUS_DIR / "manifest.json").read_text(encoding="utf-8"))
 
 
-async def score(limit: int | None, with_gates: bool) -> dict:
+def git_commit() -> str:
+    """The code version, so a metric is attributable to the code as well as the data."""
+    try:
+        sha = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+    return f"{sha}-dirty" if dirty else sha
+
+
+async def score(limit: int | None, with_gates: bool, retrieval_only: bool = False) -> dict:
     """Reuse the RAGAS harness in-process rather than shelling out to it.
 
     In-process so the returned scores are objects rather than something scraped back
@@ -93,7 +122,8 @@ async def score(limit: int | None, with_gates: bool) -> dict:
         questions=REPO_ROOT / "data" / "eval" / "questions.json",
         reports=REPORTS,
         limit=limit,
-        no_ragas=False,
+        no_ragas=retrieval_only,
+        no_generation=retrieval_only,
         with_gates=with_gates,
         dry_run=False,
     )
@@ -104,9 +134,10 @@ async def score(limit: int | None, with_gates: bool) -> dict:
     return json.loads((REPORTS / f"ragas_{version}.json").read_text(encoding="utf-8"))
 
 
-def log_one(mlflow, config: dict, report: dict, manifest: dict) -> str:
+def log_one(mlflow, config: dict, report: dict, manifest: dict, metric: str) -> str:
     """One MLflow run. Params and metrics together, never one without the other."""
     with mlflow.start_run(run_name=f"chunk{config['chunk_size']}_ov{config['overlap']}") as run:
+        mlflow.set_tags({"git_commit": git_commit(), "framework": "chunking-sweep"})
         mlflow.log_params(
             {
                 **config,
@@ -127,6 +158,9 @@ def log_one(mlflow, config: dict, report: dict, manifest: dict) -> str:
         # the wrong handbook cited is still wrong, and only this catches it.
         if accuracy.get("expected_article_hit_rate") is not None:
             metrics["expected_article_hit_rate"] = accuracy["expected_article_hit_rate"]
+        for key in ("ground_truth_token_recall", "mean_context_chars"):
+            if accuracy.get(key) is not None:
+                metrics[key] = accuracy[key]
         metrics["department_filter_leaks"] = len(accuracy.get("department_filter_leaks") or [])
         metrics["corpus_chunks"] = manifest["records"]
         metrics["max_chunk_chars"] = manifest["char_count_max"]
@@ -140,13 +174,11 @@ def log_one(mlflow, config: dict, report: dict, manifest: dict) -> str:
         if report_path.exists():
             mlflow.log_artifact(str(report_path), artifact_path="evaluation")
 
-        print(
-            f"    logged run {run.info.run_id[:12]}  {PRIMARY_METRIC}={metrics.get(PRIMARY_METRIC)}"
-        )
+        print(f"    logged run {run.info.run_id[:12]}  {metric}={metrics.get(metric)}")
         return run.info.run_id
 
 
-def register_best(mlflow, experiment_name: str) -> None:
+def register_best(mlflow, experiment_name: str, metric: str) -> None:
     """Register the winning configuration and promote it to Production.
 
     The 'model' is a configuration, so what gets registered is the RUN — its params
@@ -159,19 +191,19 @@ def register_best(mlflow, experiment_name: str) -> None:
     experiment = client.get_experiment_by_name(experiment_name)
     runs = client.search_runs(
         [experiment.experiment_id],
-        order_by=[f"metrics.{PRIMARY_METRIC} DESC"],
+        order_by=[f"metrics.{metric} DESC"],
         max_results=50,
     )
-    scored = [r for r in runs if r.data.metrics.get(PRIMARY_METRIC) is not None]
+    scored = [r for r in runs if r.data.metrics.get(metric) is not None]
     if not scored:
         print("  nothing to register: no run recorded the primary metric")
         return
 
     best, *rest = scored
-    best_value = best.data.metrics[PRIMARY_METRIC]
-    runner_up = rest[0].data.metrics[PRIMARY_METRIC] if rest else None
+    best_value = best.data.metrics[metric]
+    runner_up = rest[0].data.metrics[metric] if rest else None
 
-    print(f"\n  best by {PRIMARY_METRIC}: {best_value:.4f}")
+    print(f"\n  best by {metric}: {best_value:.4f}")
     print(
         f"    chunk_size={best.data.params.get('chunk_size')} "
         f"overlap={best.data.params.get('overlap')}"
@@ -202,7 +234,7 @@ def register_best(mlflow, experiment_name: str) -> None:
         description=(
             f"chunk_size={best.data.params.get('chunk_size')}, "
             f"overlap={best.data.params.get('overlap')}, "
-            f"{PRIMARY_METRIC}={best_value:.4f}, "
+            f"{metric}={best_value:.4f}, "
             f"corpus={best.data.params.get('corpus_sha256', '?')[:12]}"
         ),
     )
@@ -221,17 +253,27 @@ async def main_async(args) -> int:
     import mlflow
 
     grid = GRID[: args.configs] if args.configs else GRID
+    # Retrieval-only runs cost no generation or judge tokens, so the whole question set
+    # is the sensible default there; the RAGAS run keeps its small default.
+    limit = args.limit if args.limit is not None else (0 if args.retrieval_only else 20)
+    metric = RETRIEVAL_METRIC if args.retrieval_only else PRIMARY_METRIC
 
-    print(f"{len(grid)} configurations · eval limit {args.limit or 'all'}")
+    print(f"{len(grid)} configurations · eval limit {limit or 'all'} · decided on {metric}")
     for config in grid:
         print(f"  chunk_size={config['chunk_size']:>5}  overlap={config['overlap']:>4}")
 
     if args.dry_run:
         print("\n--dry-run: nothing built, indexed, scored or logged.")
-        print(
-            "Per configuration this would cost: ~3 embedding calls, "
-            f"{args.limit or 62} generations, and ~{4 * (args.limit or 62)} RAGAS judge calls."
-        )
+        if args.retrieval_only:
+            print(
+                "Per configuration this would cost: the embedding calls to index the corpus "
+                f"plus one per question ({limit or 62}). No generation, no judge."
+            )
+        else:
+            print(
+                "Per configuration this would cost: ~3 embedding calls, "
+                f"{limit or 62} generations, and ~{4 * (limit or 62)} RAGAS judge calls."
+            )
         return 0
 
     mlflow.set_tracking_uri(args.tracking_uri)
@@ -262,13 +304,16 @@ async def main_async(args) -> int:
 
         run(["uv", "run", "--extra", "dev", "python", "scripts/index_corpus.py"], "indexing")
 
-        print("    scoring with RAGAS (slow)...", flush=True)
-        report = await score(args.limit, args.with_gates)
+        if args.retrieval_only:
+            print("    measuring retrieval (no generation, no judge)...", flush=True)
+        else:
+            print("    scoring with RAGAS (slow)...", flush=True)
+        report = await score(limit, args.with_gates, retrieval_only=args.retrieval_only)
 
-        log_one(mlflow, config, report, manifest)
+        log_one(mlflow, config, report, manifest, metric)
 
     if args.register:
-        register_best(mlflow, args.experiment)
+        register_best(mlflow, args.experiment, metric)
 
     print(f"\nCompare the runs at {args.tracking_uri}/#/experiments")
     return 0
@@ -281,8 +326,13 @@ def main() -> int:
     parser.add_argument(
         "--limit",
         type=int,
-        default=20,
-        help="eval questions per run. 20 keeps a 5-config grid inside a coffee break",
+        default=None,
+        help="eval questions per run; 0 means all. Default 20, or all with --retrieval-only",
+    )
+    parser.add_argument(
+        "--retrieval-only",
+        action="store_true",
+        help="no generation and no judge: rank configs on free retrieval metrics",
     )
     parser.add_argument("--configs", type=int, default=None, help="only the first N configs")
     parser.add_argument("--with-gates", action="store_true", help="also record the judge verdicts")

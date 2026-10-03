@@ -63,6 +63,7 @@ class Settings(BaseSettings):
     # and the judge model is the one already capped at 8,000 TPM. Pointing both at it
     # would make an evaluation run starve the thing it is evaluating.
     RAGAS_MODEL_ID: str | None = None
+    RAGAS_API_URL: str | None = None
     # RAGAS runs its metric jobs concurrently and defaults to 16 workers. Against a
     # free tier capped at 8,000 tokens/minute that produced a wall of TimeoutErrors
     # and a `nan` for one whole metric — every job for it failed.

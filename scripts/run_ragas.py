@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -43,6 +44,15 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 DEFAULT_QUESTIONS = REPO_ROOT / "data" / "eval" / "questions.json"
 DEFAULT_MANIFEST = REPO_ROOT / "data" / "corpus" / "manifest.json"
 DEFAULT_REPORTS = REPO_ROOT / "reports"
+
+# Text normalisation for the free answer-containment check. Arabic needs it: the same
+# word differs by diacritics, tatweel and alef variant, and a lexical comparison that
+# ignores that reports a miss for text that is plainly there.
+_AR_MARKS = re.compile("[\u0610-\u061a\u064b-\u065f\u0670\u0640]")
+_AR_ALEF = re.compile("[\u0623\u0625\u0622]")
+_AR_DIGITS = str.maketrans(
+    "\u0660\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669", "0123456789"
+)
 
 
 def corpus_version() -> str:
@@ -57,8 +67,14 @@ def corpus_version() -> str:
         return "unknown"
 
 
-async def collect_samples(questions: list[dict], deps, *, top_k: int) -> list[dict]:
+async def collect_samples(
+    questions: list[dict], deps, *, top_k: int, generate: bool = True
+) -> list[dict]:
     """Run retrieval and generation for each question, recording what RAGAS needs.
+
+    With `generate=False` only retrieval runs: no generation call, no answer, nothing
+    for a judge to score. That is the mode the chunking sweep uses, because chunking
+    changes what gets retrieved and everything after it is the generator's doing.
 
     Sequential, not gathered. The provider's token budget is the binding constraint
     here — concurrency buys nothing when the limiter is per-minute, and it turns a
@@ -93,6 +109,12 @@ async def collect_samples(questions: list[dict], deps, *, top_k: int) -> list[di
             # it is the CORRECT one. Recorded rather than skipped.
             row["answer"] = ""
             row["generation_skipped"] = "no chunks retrieved"
+            rows.append(row)
+            continue
+
+        if not generate:
+            row["answer"] = ""
+            row["generation_skipped"] = "retrieval-only run"
             rows.append(row)
             continue
 
@@ -271,6 +293,27 @@ class _AppEmbeddings:
         return [list(v) for v in self._client.embed_text(list(texts), "document")]
 
 
+def _tokens(text: str) -> set[str]:
+    """Normalised word set. Digits count: '132' is usually the whole answer."""
+    text = _AR_MARKS.sub("", text.translate(_AR_DIGITS).lower())
+    text = _AR_ALEF.sub("\u0627", text)
+    return {t for t in re.findall(r"\w+", text) if len(t) > 2 or t.isdigit()}
+
+
+def ground_truth_recall(reference: str, contexts: list[str]) -> float | None:
+    """Share of the reference answer's words that appear in the retrieved text.
+
+    A crude, free stand-in for context_recall. It is lexical, so it undercounts a
+    correct paraphrase and its absolute value means little; it exists to compare
+    configurations on the same questions without spending a single judge token.
+    Returns None when the reference has nothing to compare (an unanswerable question).
+    """
+    wanted = _tokens(reference)
+    if not wanted:
+        return None
+    return len(wanted & _tokens(" ".join(contexts))) / len(wanted)
+
+
 def retrieval_accuracy(rows: list[dict]) -> dict:
     """Cheap checks RAGAS does not make, computed from what we already collected.
 
@@ -302,6 +345,13 @@ def retrieval_accuracy(rows: list[dict]) -> dict:
         and any(s in handbooks and s not in r["expected_sources"] for s in r["retrieved_sources"])
     ]
 
+    recalls = [
+        value
+        for r in answerable
+        if (value := ground_truth_recall(r.get("reference") or "", r["retrieved_contexts"]))
+        is not None
+    ]
+
     return {
         "answerable": len(answerable),
         "expected_article_retrieved": article_hits,
@@ -316,6 +366,15 @@ def retrieval_accuracy(rows: list[dict]) -> dict:
             1 for r in unanswerable if not r["retrieved_contexts"]
         ),
         "unanswerable_total": len(unanswerable),
+        # Both of these reward bigger chunks by construction: more text per hit means
+        # more chances to contain the answer. mean_context_chars is reported next to
+        # them so that trade is visible instead of being mistaken for quality.
+        "ground_truth_token_recall": round(sum(recalls) / len(recalls), 3) if recalls else None,
+        "mean_context_chars": (
+            round(sum(len("".join(r["retrieved_contexts"])) for r in answerable) / len(answerable))
+            if answerable
+            else None
+        ),
     }
 
 
@@ -389,9 +448,11 @@ async def main_async(args) -> int:
 
     try:
         print("\nretrieval + generation (gates bypassed):")
-        rows = await collect_samples(questions, Deps, top_k=settings.RETRIEVAL_TOP_K)
+        rows = await collect_samples(
+            questions, Deps, top_k=settings.RETRIEVAL_TOP_K, generate=not args.no_generation
+        )
 
-        if args.with_gates:
+        if args.with_gates and not args.no_generation:
             print("\nrecording what the online gates would have said:")
             await record_gate_verdicts(rows, Deps)
     finally:
@@ -414,7 +475,7 @@ async def main_async(args) -> int:
         "rows": rows,
     }
 
-    if not args.no_ragas:
+    if not (args.no_ragas or args.no_generation):
         print("\nscoring with RAGAS (this is the part that costs tokens):")
         outcome = score_with_ragas(rows, settings, embedding_client)
         report["ragas_scored"] = outcome["scored"]
@@ -446,6 +507,11 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=None, help="first N questions (CI subset)")
     parser.add_argument(
         "--no-ragas", action="store_true", help="collect and check retrieval, skip the scoring"
+    )
+    parser.add_argument(
+        "--no-generation",
+        action="store_true",
+        help="retrieval only: no generation calls, no judge, no RAGAS (implies --no-ragas)",
     )
     parser.add_argument(
         "--with-gates",
