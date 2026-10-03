@@ -24,7 +24,7 @@ stages:
     outs:
     - path: data/corpus
       hash: md5
-      md5: 5d9692b4a1a99fc6ea9e66a204415c3c.dir
+      md5: 712fb9955c91e5c3dac396ac8f33cffb.dir
       size: 267513
       nfiles: 2
   index:
@@ -32,7 +32,7 @@ stages:
     deps:
     - path: data/corpus
       hash: md5
-      md5: 5d9692b4a1a99fc6ea9e66a204415c3c.dir
+      md5: 712fb9955c91e5c3dac396ac8f33cffb.dir
       size: 267513
       nfiles: 2
     - path: scripts/index_corpus.py
