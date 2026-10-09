@@ -191,6 +191,12 @@ class Settings(BaseSettings):
     LANGFUSE_SECRET_KEY: str = ""
     LANGFUSE_HOST: str = "http://localhost:3002"
 
+    # --- guardrails (PII) ---
+    # On by default, and that is the point: a redactor you have to remember to turn
+    # on is not a guardrail. Off is for reproducing a report of over-redaction, never
+    # for production — helpers/pii.py explains what it does and does not match.
+    PII_REDACTION_ENABLED: bool = True
+
     # --- escalation ---
     ESCALATION_STUDENT_MESSAGE: str = (
         "I couldn't answer this from the handbook with confidence, "

@@ -37,6 +37,7 @@ import re
 from pydantic import ValidationError
 
 from customer_support.helpers.logging_config import get_logger
+from customer_support.helpers.pii import redact_fields
 from customer_support.models.llm_schemas.student_profile import (
     StudentProfile,
     StudentProfileUpdate,
@@ -157,6 +158,23 @@ class MemoryController(BaseController):
                 return None
 
             learned = update.learned_fields()
+
+            # Guardrails on the WRITE, which is the one that matters here: this is
+            # the only path in the system that persists free text a student typed.
+            # "I'm Omar, 01012345678" is a perfectly ordinary first message, and the
+            # extractor has no reason not to put the whole string in `name`.
+            #
+            # Dropped rather than redacted — see redact_fields. A profile whose name
+            # is "[PHONE]" is rendered into every later prompt.
+            if self.app_settings.PII_REDACTION_ENABLED:
+                learned, redactions = redact_fields(learned)
+                if redactions:
+                    self.logger.warning(
+                        "pii_dropped_from_profile",
+                        student_id=student_id,
+                        kinds=dict(redactions),
+                    )
+
             if not learned:
                 # Recorded even though nothing was learned: it is what makes the
                 # gate's hit rate measurable instead of a claim.

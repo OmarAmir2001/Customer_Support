@@ -21,6 +21,10 @@ class FakeSettings:
     MEMORY_MAX_OUTPUT_TOKENS = 600
     MEMORY_TEMPERATURE = 0.0
     ASSETS_DIR = "assets"
+    # The guardrail on the profile write. Declared here rather than defaulted in the
+    # controller: a test that does not say which settings it needs is the thing
+    # conftest.py exists to prevent.
+    PII_REDACTION_ENABLED = True
 
 
 class FakeExtractor:

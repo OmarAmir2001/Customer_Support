@@ -8,6 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request, 
 from customer_support.helpers.citations import citations_for
 from customer_support.helpers.locale import negotiate_language
 from customer_support.helpers.logging_config import get_logger, set_correlation_id
+from customer_support.helpers.pii import redact
 from customer_support.helpers.tracing import finish_trace, set_current_trace, start_trace
 from customer_support.models.graph.conversation import ConversationMessage
 from customer_support.routers.schemas.chat import ChatRequest, ChatResponse
@@ -146,6 +147,26 @@ async def chat(
         ticket_id=final_state.get("ticket_id"),
     )
 
+    # Guardrails, on the way out. The answer can carry PII the handbook never had:
+    # a promoted ticket answer is advisor-written free text, so a number typed into
+    # one student's resolution can reach a different student through retrieval.
+    #
+    # Redacted AFTER the gates, not before: the judges score the answer the model
+    # actually produced, and scoring a string containing "[PHONE]" against the
+    # excerpts would read as an unsupported claim and escalate a good answer.
+    answer = final_state.get("answer") or ""
+    if request.app.state.settings.PII_REDACTION_ENABLED:
+        answer, redactions = redact(answer)
+        if redactions:
+            # Counts and kinds only — logging the value would defeat the redaction
+            # in the one place it is most likely to be read back.
+            logger.warning(
+                "pii_redacted",
+                where="chat_answer",
+                kinds=dict(redactions),
+                student_id=payload.student_id,
+            )
+
     record_question(
         outcome="escalated" if escalated else "answered",
         failed_gate=final_state.get("failed_gate"),
@@ -160,7 +181,7 @@ async def chat(
 
     return ChatResponse(
         thread_id=thread_id,
-        answer=final_state.get("answer") or "",
+        answer=answer,
         escalated=escalated,
         # Only for an answer that passed every gate. On the escalation path the
         # chunks were retrieved but the answer built from them was withheld, so
