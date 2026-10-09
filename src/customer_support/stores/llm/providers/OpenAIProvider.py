@@ -113,6 +113,52 @@ class OpenAIProvider(LLMInterface):
             return None
         return response.choices[0].message.content
 
+    def stream_text(
+        self,
+        prompt: str,
+        chat_history: list = None,
+        max_output_tokens: int = None,
+        temperature: float = None,
+    ):
+        """Real token streaming from the provider.
+
+        Note what is NOT wrapped in self._call: a streaming response cannot be
+        retried once it has started yielding, because the caller has already been
+        handed part of the answer. The create() call itself is the only retryable
+        moment, so only that is wrapped — anything failing mid-stream propagates, and
+        the caller decides whether a partial answer is usable.
+        """
+        if not self.client or not self.generation_model_id:
+            self.logger.error(
+                "llm_client_not_initialised", provider="openai", operation="stream_text"
+            )
+            return
+
+        chat_history = chat_history or []
+        messages = chat_history + [self.construct_prompt(prompt, OpenAIEnums.USER.value)]
+
+        stream = self._call(
+            lambda: self.client.chat.completions.create(
+                model=self.generation_model_id,
+                messages=messages,
+                max_tokens=max_output_tokens or self.default_generation_max_output_tokens,
+                temperature=(
+                    temperature if temperature is not None else self.default_generation_temperature
+                ),
+                stream=True,
+            ),
+            operation="stream_text",
+        )
+
+        for chunk in stream:
+            # Reasoning models emit chunks with no choices, and the final chunk
+            # carries only a finish_reason. Both are normal, not errors.
+            if not chunk.choices:
+                continue
+            piece = chunk.choices[0].delta.content
+            if piece:
+                yield piece
+
     def generate_json(
         self,
         prompt: str,

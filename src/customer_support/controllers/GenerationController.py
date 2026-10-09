@@ -82,6 +82,75 @@ class GenerationController(BaseController):
 
         return answer.strip()
 
+    def build_prompt(
+        self,
+        question: str,
+        chunks: list[RetrievedDocument],
+        language: str | None = None,
+        profile: StudentProfile | None = None,
+        messages: list[ConversationMessage] | None = None,
+    ) -> tuple[str, str]:
+        """The exact prompt generate_answer would send. Returns (system, prompt).
+
+        Extracted so the streaming path cannot drift from the blocking one. Two
+        copies of this assembly would diverge the first time a section was added,
+        and the streamed answer would then be built from a different prompt than the
+        one the judges were tuned against.
+        """
+        system_prompt = self.templates.get(
+            RAG_GROUP,
+            "system_prompt",
+            {"assistant_name": self.app_settings.ASSISTANT_NAME},
+            language=language,
+        )
+        footer = self.templates.get(
+            RAG_GROUP, "footer_prompt", {"question": question}, language=language
+        )
+        if not system_prompt or not footer:
+            raise RuntimeError(
+                f"rag templates missing for language {language!r}; cannot build the answer prompt"
+            )
+
+        sections = [
+            self._profile_section(profile, language),
+            self._history_section(messages, language),
+            format_excerpts(chunks, self.templates, language=language),
+            footer,
+        ]
+        return system_prompt, "\n\n".join(section for section in sections if section)
+
+    def stream_answer(
+        self,
+        question: str,
+        chunks: list[RetrievedDocument],
+        language: str | None = None,
+        profile: StudentProfile | None = None,
+        messages: list[ConversationMessage] | None = None,
+    ):
+        """Yield the answer in pieces, for a caller that streams to a client.
+
+        **The judge gates do not run on this path, and that is the trade.** The gates
+        are post-generation: faithfulness and answer relevance can only be scored
+        once a complete answer exists. Streaming hands the student text before it
+        exists, so there is nothing to withhold by the time a gate could object.
+
+        So a streamed answer is an UNVERIFIED answer. `/chat` remains the gated,
+        default path; streaming is opt-in for a caller that has accepted that trade —
+        which is why it lives in the BentoML service rather than replacing /chat.
+        """
+        if not chunks:
+            raise ValueError("stream_answer called with no chunks")
+
+        system_prompt, prompt = self.build_prompt(
+            question, chunks, language=language, profile=profile, messages=messages
+        )
+        yield from self.generation_client.stream_text(
+            prompt,
+            [self.generation_client.construct_prompt(system_prompt, "system")],
+            self.app_settings.GENERATION_DEFAULT_MAX_TOKENS,
+            self.app_settings.GENERATION_DEFAULT_TEMPERATURE,
+        )
+
     # -------------------------------------------------------------- sections
 
     def _profile_section(self, profile: StudentProfile | None, language: str | None) -> str:
