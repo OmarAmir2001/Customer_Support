@@ -35,6 +35,30 @@ class LLMInterface(ABC):
         """
         pass
 
+    def stream_text(
+        self,
+        prompt: str,
+        chat_history: list = None,
+        max_output_tokens: int = None,
+        temperature: float = None,
+    ):
+        """Yield the answer in pieces as the model produces it.
+
+        NOT abstract, deliberately. Streaming is an optimisation of a user's
+        perceived wait, not part of what makes a provider usable here — a provider
+        that cannot stream should still be selectable. The default yields the whole
+        answer as one chunk, so every caller can treat streaming as always available
+        and no provider is forced to implement it.
+        """
+        answer = self.generate_text(
+            prompt,
+            chat_history=chat_history,
+            max_output_tokens=max_output_tokens,
+            temperature=temperature,
+        )
+        if answer:
+            yield answer
+
     @abstractmethod
     def embed_text(self, text: str, document_type: str = None):
         pass
