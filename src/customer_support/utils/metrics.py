@@ -77,6 +77,45 @@ JUDGE_FAILURES = Counter(
 )
 
 
+TOKENS = Counter(
+    "customer_support_tokens_total",
+    "Provider tokens consumed, by model and direction",
+    # Model and direction ONLY. The obvious third label — which question, which
+    # student, which thread — is what turns a cost counter into an unbounded one,
+    # and cost per question is not a thing you read off a dashboard anyway.
+    ["model", "kind"],
+)
+
+QUERY_DRIFT = Histogram(
+    "customer_support_query_drift_cosine",
+    "Cosine similarity between a question's embedding and the eval-set centroid",
+    # Explicit buckets, because the default Histogram buckets are latency buckets
+    # (.005 to 10) and would put every cosine in the first two.
+    buckets=(0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 1.0),
+)
+
+
+def record_tokens(model: str | None, prompt: int | None, completion: int | None) -> None:
+    """One provider call's usage. Cost is Grafana's job, not this counter's.
+
+    Prices change and differ per model, so baking one in here would mint a metric
+    that is wrong the next time a rate card moves — and would make a cost correction
+    a code deploy. The dashboard multiplies by an editable constant instead.
+    """
+    label = model or "unknown"
+    if prompt:
+        TOKENS.labels(label, "prompt").inc(prompt)
+    if completion:
+        TOKENS.labels(label, "completion").inc(completion)
+
+
+def record_query_drift(cosine_similarity: float | None) -> None:
+    """How far one question sat from the evaluation set. No-op without a baseline."""
+    if cosine_similarity is None:
+        return
+    QUERY_DRIFT.observe(cosine_similarity)
+
+
 def record_question(outcome: str, failed_gate: str | None, department: str | None) -> None:
     """One completed question. Called once per run, from the only entry point."""
     QUESTIONS.labels(outcome, failed_gate or "none", department or "none").inc()

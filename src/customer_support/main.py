@@ -19,6 +19,7 @@ from customer_support.controllers.RetrievalController import RetrievalController
 from customer_support.graph.builder import build_graph
 from customer_support.graph.dependencies import GraphDeps
 from customer_support.helpers.config import get_settings
+from customer_support.helpers.drift import load_baseline
 from customer_support.helpers.logging_config import configure_logging, get_logger
 from customer_support.helpers.tracing import configure_tracing, shutdown_tracing
 from customer_support.models.ProfileModel import ProfileModel
@@ -141,11 +142,17 @@ async def lifespan(app: FastAPI):
         # --- controllers (all logic lives here) ---
         collection_name = settings.KB_COLLECTION_NAME
 
+        # Loaded once at boot, not per request: it is a 384-float constant, and a
+        # missing file disables the drift metric and nothing else — a fresh clone
+        # has no baseline because building one costs embedding calls.
+        drift_baseline = load_baseline()
+
         retrieval = RetrievalController(
             vectordb_client=vectordb_client,
             embedding_client=embedding_client,
             collection_name=collection_name,
             settings=settings,
+            drift_centroid=(drift_baseline or {}).get("centroid"),
         )
         grading = GradingController(
             generation_client=judge_client, templates=templates, settings=settings
@@ -214,6 +221,7 @@ async def lifespan(app: FastAPI):
             locales=list(templates.supported_languages),
             primary_language=templates.primary_language,
             memory_enabled=settings.MEMORY_ENABLED,
+            drift_baseline=bool(drift_baseline),
             memory_model=settings.MEMORY_MODEL_ID
             or settings.JUDGE_MODEL_ID
             or settings.GENERATION_MODEL_ID,

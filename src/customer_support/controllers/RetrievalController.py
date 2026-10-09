@@ -8,9 +8,11 @@ here, deliberately: ticket answers fill gaps, they never override the handbook.
 
 import asyncio
 
+from customer_support.helpers.drift import cosine
 from customer_support.helpers.logging_config import get_logger
 from customer_support.models.db_schemas import RetrievedDocument
 from customer_support.stores.llm.LLMEnum import DocumentTypeEnum
+from customer_support.utils.metrics import record_query_drift
 
 from .BaseController import BaseController
 
@@ -19,11 +21,23 @@ INSTRUCTOR_RESOLVED_SOURCE = "instructor_resolved"
 
 
 class RetrievalController(BaseController):
-    def __init__(self, vectordb_client, embedding_client, collection_name: str, settings=None):
+    def __init__(
+        self,
+        vectordb_client,
+        embedding_client,
+        collection_name: str,
+        settings=None,
+        drift_centroid: list[float] | None = None,
+    ):
         super().__init__(settings)
         self.vectordb_client = vectordb_client
         self.embedding_client = embedding_client
         self.collection_name = collection_name
+        # The evaluation set's centroid, or None. Measured here rather than in a
+        # node because this is the one place the query vector already exists —
+        # anywhere else would mean paying for a second embedding call to produce a
+        # number that is only instrumentation.
+        self.drift_centroid = drift_centroid
         self.logger = get_logger(__name__)
 
     async def retrieve(
@@ -45,6 +59,8 @@ class RetrievalController(BaseController):
         )
         if not vectors:
             raise RuntimeError("query embedding failed")
+
+        self._record_drift(vectors[0])
 
         # Over-fetch, because department filtering and precedence re-ranking both
         # discard rows. Fetching exactly `limit` would leave gaps after filtering.
@@ -81,6 +97,31 @@ class RetrievalController(BaseController):
             department=department,
         )
         return ranked
+
+    def _record_drift(self, vector: list[float]) -> None:
+        """One dot product against the baseline, exported as a histogram.
+
+        A falling cosine says students are asking about things the evaluation set —
+        and therefore the handbook, and therefore every quality number measured
+        against it — does not cover. Read beside the escalation rate it separates a
+        corpus problem from a provider problem.
+        """
+        if not self.drift_centroid:
+            return
+
+        similarity = cosine(vector, self.drift_centroid)
+        if similarity is None:
+            # Almost always a dimension mismatch: a baseline built with a different
+            # EMBEDDING_MODEL_SIZE. Worth saying out loud, because the alternative
+            # is a drift panel that is flat for a reason nobody can see.
+            self.logger.warning(
+                "drift_not_comparable",
+                query_dimensions=len(vector),
+                baseline_dimensions=len(self.drift_centroid),
+            )
+            return
+
+        record_query_drift(similarity)
 
     @staticmethod
     def _filter_by_department(

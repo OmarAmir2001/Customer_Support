@@ -2,7 +2,7 @@
   "title": "Customer Support — API Overview",
   "uid": "cs-api-overview",
   "schemaVersion": 39,
-  "version": 2,
+  "version": 3,
   "refresh": "30s",
   "time": {
     "from": "now-1h",
@@ -213,6 +213,138 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Tokens per hour by model",
+      "description": "Provider-reported usage, not an estimate from character counts — Arabic and English tokenise very differently in these models, so a character estimate would be wrong by a language-dependent factor. Streaming responses are NOT counted: usage needs stream_options, and risking the stream for a cost panel is the wrong trade.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (model) (rate(customer_support_tokens_total[5m])) * 3600",
+          "legendFormat": "{{model}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Estimated cost per hour (USD)",
+      "description": "Tokens/hour multiplied by the $price_in and $price_out dashboard constants at the top of this dashboard. Edit those when the rate card changes; nothing in the application needs redeploying. Input and output are priced separately because output is several times dearer, and a blended rate hides the one lever you have — answer length.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 4
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(customer_support_tokens_total{kind=\"prompt\"}[5m])) * 3600 * $price_in / 1e6",
+          "legendFormat": "input",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(customer_support_tokens_total{kind=\"completion\"}[5m])) * 3600 * $price_out / 1e6",
+          "legendFormat": "output",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Query drift — cosine vs the eval-set centroid",
+      "description": "Median and 5th percentile of how close each question sits to the evaluation set the gates and the chunking sweep were tuned on. FALLING means students are asking about things the handbook does not cover, which is a corpus problem — read it beside the escalation rate, because escalations rising with drift flat is a provider problem instead. The eval questions' own 5th percentile is 0.33 (see data/eval/drift_baseline.json), so sustained p5 below that is genuinely unusual traffic rather than noise.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 40
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "max": 1,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.33
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(customer_support_query_drift_cosine_bucket[15m])))",
+          "legendFormat": "median",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.05, sum by (le) (rate(customer_support_query_drift_cosine_bucket[15m])))",
+          "legendFormat": "p5 (most unusual questions)",
+          "refId": "B"
+        }
+      ]
     }
-  ]
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "price_in",
+        "label": "USD per 1M input tokens",
+        "type": "constant",
+        "hide": 0,
+        "query": "0.15",
+        "current": {
+          "text": "0.15",
+          "value": "0.15"
+        }
+      },
+      {
+        "name": "price_out",
+        "label": "USD per 1M output tokens",
+        "type": "constant",
+        "hide": 0,
+        "query": "0.60",
+        "current": {
+          "text": "0.60",
+          "value": "0.60"
+        }
+      }
+    ]
+  }
 }
