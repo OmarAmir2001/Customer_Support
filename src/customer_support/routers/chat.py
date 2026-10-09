@@ -7,6 +7,7 @@ from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request, 
 
 from customer_support.helpers.locale import negotiate_language
 from customer_support.helpers.logging_config import get_logger, set_correlation_id
+from customer_support.helpers.tracing import finish_trace, set_current_trace, start_trace
 from customer_support.models.graph.conversation import ConversationMessage
 from customer_support.routers.schemas.chat import ChatRequest, ChatResponse
 from customer_support.utils.metrics import record_question
@@ -43,7 +44,23 @@ async def chat(
         requested=payload.language,
         profile_language=profile.preferred_language,
         accept_language=accept_language,
+        # Lowest-priority signal, used only when the client stated no preference at
+        # all. Without it an Arabic question from a client that sends no `language`
+        # gets an English answer.
+        question=payload.question,
     )
+
+    # One trace per question, keyed on thread_id — the same identifier as the
+    # structlog correlation id, so a trace and its log lines are joinable without
+    # guessing from timestamps. A no-op when the Langfuse keys are unset.
+    trace = start_trace(
+        thread_id=thread_id,
+        question=payload.question,
+        student_id=payload.student_id,
+        language=language,
+        department=payload.department,
+    )
+    set_current_trace(trace)
 
     # The stored profile WINS over the request body. Department drives which handbook
     # is searched, so letting a client assert it means a CS student can read the IS
@@ -103,6 +120,14 @@ async def chat(
     # The one place every question's outcome is known. Recorded here rather than in a
     # node because a run can leave the graph by more than one path, and an escalation
     # rate built from a counter that misses a path is worse than none.
+    finish_trace(
+        trace,
+        answer=final_state.get("answer"),
+        escalated=escalated,
+        failed_gate=final_state.get("failed_gate"),
+        ticket_id=final_state.get("ticket_id"),
+    )
+
     record_question(
         outcome="escalated" if escalated else "answered",
         failed_gate=final_state.get("failed_gate"),

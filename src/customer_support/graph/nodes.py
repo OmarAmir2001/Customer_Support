@@ -9,6 +9,7 @@ functions of (state) from LangGraph's point of view.
 """
 
 from customer_support.helpers.logging_config import get_logger
+from customer_support.helpers.tracing import traced
 from customer_support.models.enums.GateEnum import GateEnum, GateFailureReason
 from customer_support.models.graph.conversation import ConversationMessage
 from customer_support.models.graph.graph_state import GraphState
@@ -37,6 +38,7 @@ def _record_gates(state: GraphState, results: list[GateResult]) -> dict:
 
 
 def make_retrieve_node(deps: GraphDeps):
+    @traced("retrieve")
     async def retrieve_node(state: GraphState) -> dict:
         chunks = await deps.retrieval.retrieve(
             question=state["question"],
@@ -49,6 +51,7 @@ def make_retrieve_node(deps: GraphDeps):
 
 
 def make_grade_node(deps: GraphDeps):
+    @traced("gate_context_relevance")
     async def grade_node(state: GraphState) -> dict:
         result = await deps.grading.check_context_relevance(
             question=state["question"],
@@ -60,6 +63,7 @@ def make_grade_node(deps: GraphDeps):
 
 
 def make_generate_node(deps: GraphDeps):
+    @traced("generate")
     async def generate_node(state: GraphState) -> dict:
         answer = await deps.generation.generate_answer(
             question=state["question"],
@@ -87,6 +91,7 @@ def make_generate_node(deps: GraphDeps):
 
 
 def make_judge_node(deps: GraphDeps):
+    @traced("gates_post_generation")
     async def judge_node(state: GraphState) -> dict:
         results = await deps.grading.check_post_generation(
             question=state["question"],
@@ -108,6 +113,7 @@ def make_judge_node(deps: GraphDeps):
 
 
 def make_escalate_node(deps: GraphDeps):
+    @traced("escalate")
     async def escalate_node(state: GraphState) -> dict:
         ticket = await deps.escalation.create_ticket(state)
 
