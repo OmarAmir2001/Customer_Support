@@ -20,6 +20,7 @@ from customer_support.graph.builder import build_graph
 from customer_support.graph.dependencies import GraphDeps
 from customer_support.helpers.config import get_settings
 from customer_support.helpers.logging_config import configure_logging, get_logger
+from customer_support.helpers.tracing import configure_tracing, shutdown_tracing
 from customer_support.models.ProfileModel import ProfileModel
 from customer_support.models.TicketModel import TicketModel
 from customer_support.routers.admin import admin_router
@@ -42,6 +43,7 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI):
     settings = get_settings()
     configure_logging(level=settings.LOG_LEVEL, json_logs=settings.LOG_JSON)
+    configure_tracing(settings)
 
     # AsyncExitStack closes everything opened here, in reverse order, even if a later
     # startup step raises. Without it a failed boot leaks connections on every reload.
@@ -218,6 +220,9 @@ async def lifespan(app: FastAPI):
         )
         yield
 
+    # Flush buffered traces: the SDK batches in a background thread, so the last
+    # few traces of a run are simply lost without this.
+    shutdown_tracing()
     logger.info("application_stopped")
 
 

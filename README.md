@@ -344,6 +344,52 @@ make test                            # or: uv run --extra dev pytest tests -q --
 
 No database, no API keys, no graph — the gates, the ticket state machine and the retrieval ranking are all pure logic by design.
 
+### Offline evaluation and chunking experiments
+
+With the stack running and provider keys configured, preview the experiment without
+making any API calls:
+
+```bash
+uv run --extra dev python scripts/run_experiment.py --dry-run
+```
+
+Start with one configuration and a subset. This generates answers and measures
+RAGAS context precision, context recall, faithfulness and answer relevancy:
+
+```bash
+uv run --extra dev python scripts/run_experiment.py --chunk-size 1000 --overlap 50 --limit 20
+```
+
+This consumes Groq and Cohere quota. Check your account's daily token budget before
+running; sequential workers do not increase it. Omit `--chunk-size` to compare all
+five configurations, and use `--limit 0` for the full question set. A full sweep can
+exceed free-tier daily quota. `--limit 20` selects a deterministic subset
+covering both languages, both departments and unanswerable questions. Unanswerable
+questions retain their generated responses but are excluded from reference-based
+RAGAS averages; they have no factual reference answer.
+
+Experiments rebuild into their own report directories and index `collection_9001`,
+separate from the live assistant. MLflow at `http://127.0.0.1:5000` records parameters,
+all four metrics, generated answers, contexts, evaluation and corpus hashes, corpus
+artifacts, configuration, and code/dependency snapshots. Reports live under
+`reports/experiments/<session>/`; `summary.json` links configurations to run IDs.
+
+Answers and each successful metric are checkpointed. Scoring stops on provider
+errors, including HTTP 429, rather than retrying exhausted quota. After quota
+recovers, resume a stopped sweep with
+`--resume-dir reports/experiments/<session>` and the same evaluation options, or
+retry one report with `scripts/run_ragas.py --resume <report>` and its original
+`--manifest` and `--limit`. Missing answers, failed metric jobs and non-finite scores
+fail the experiment instead of producing a misleading successful run. Resume reuses
+valid scores and evaluates only missing metrics; fully collected reports also skip
+re-indexing.
+
+`--register` considers only complete runs from the current comparison. Faithfulness
+must reach 0.75; scores within `--tie-margin` (default 0.05) are treated as tied and
+less retrieved context wins. This is a conservative tie policy, not a measured noise
+floor. The selected retrieval configuration is registered as `HandbookRetrieval`,
+and its `production` alias and legacy Production stage are verified to agree.
+
 ---
 
 ## API
