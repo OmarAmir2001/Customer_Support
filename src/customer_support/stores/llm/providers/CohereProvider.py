@@ -4,6 +4,7 @@ from customer_support.helpers.logging_config import get_logger
 
 from ..LLMEnum import CohereEnums, DocumentTypeEnum
 from ..LLMInterface import LLMInterface
+from ..rate_limit import call_with_rate_limit_retry
 
 
 class CohereProvider(LLMInterface):
@@ -13,11 +14,24 @@ class CohereProvider(LLMInterface):
         default_input_max_characters: int = 1000,
         default_generation_max_output_tokens: int = 1000,
         default_generation_temperature: float = 0.1,
+        rate_limit_max_retries: int = 3,
+        rate_limit_max_wait: float = 8.0,
+        rate_limit_total_budget: float = 12.0,
     ):
         self.api_key = api_key
         self.default_input_max_characters = default_input_max_characters
         self.default_generation_max_output_tokens = default_generation_max_output_tokens
         self.default_generation_temperature = default_generation_temperature
+
+        # The 429 policy. This provider went without one until Cohere became the
+        # primary backend, and the omission had already cost a real run: an
+        # evaluation sweep died partway through on
+        # `TooManyRequestsError: You are using a Trial key, which is limited to 40 API
+        # calls / minute`, taking every RAGAS score with it. The reports from that
+        # sweep still carry `"ragas": null`.
+        self.rate_limit_max_retries = rate_limit_max_retries
+        self.rate_limit_max_wait = rate_limit_max_wait
+        self.rate_limit_total_budget = rate_limit_total_budget
 
         self.generation_model_id = None
         self.embedding_model_id = None
@@ -36,6 +50,21 @@ class CohereProvider(LLMInterface):
 
     def process_text(self, text: str):
         return text[: self.default_input_max_characters].strip()
+
+    def _call(self, call, operation: str):
+        """Every Cohere SDK call goes through here, so no call site can forget it.
+
+        Mirrors OpenAIProvider._call deliberately. `is_rate_limit` duck-types on the
+        exception class name, so Cohere's `TooManyRequestsError` is recognised
+        without this module importing either SDK's exception types.
+        """
+        return call_with_rate_limit_retry(
+            call,
+            operation=operation,
+            max_retries=self.rate_limit_max_retries,
+            max_wait=self.rate_limit_max_wait,
+            total_budget=self.rate_limit_total_budget,
+        )
 
     def generate_text(
         self,
@@ -63,12 +92,22 @@ class CohereProvider(LLMInterface):
         # Matches what OpenAIProvider already does.
         chat_history = chat_history or []
 
-        response = self.client.chat(
-            model=self.generation_model_id,
-            chat_history=chat_history,
-            message=self.construct_prompt(prompt, CohereEnums.USER.value),
-            temperature=temperature,
-            max_tokens=max_output_tokens,
+        response = self._call(
+            lambda: self.client.chat(
+                model=self.generation_model_id,
+                chat_history=chat_history,
+                # A STRING, not construct_prompt's dict.
+                #
+                # Cohere's v1 chat takes `message` as plain text and the role/text
+                # dicts only in `chat_history`; passing the dict here returns a bare
+                # 422 UnprocessableEntityError. This went unnoticed for as long as
+                # Cohere was used only for embeddings — it fired the moment Cohere
+                # became the generation backend.
+                message=self.process_text(prompt),
+                temperature=temperature,
+                max_tokens=max_output_tokens,
+            ),
+            operation="generate_text",
         )
         if not response or not response.text:
             self.logger.error(
@@ -104,14 +143,18 @@ class CohereProvider(LLMInterface):
             self.logger.error("generation_model_not_set", provider="cohere")
             return None
 
-        response = self.client.chat(
-            model=self.generation_model_id,
-            preamble=system_prompt,
-            message=prompt,
-            temperature=(
-                temperature if temperature is not None else self.default_generation_temperature
+        response = self._call(
+            lambda: self.client.chat(
+                model=self.generation_model_id,
+                preamble=system_prompt,
+                message=prompt,
+                temperature=(
+                    temperature if temperature is not None else self.default_generation_temperature
+                ),
+                max_tokens=max_output_tokens or self.default_generation_max_output_tokens,
             ),
-            max_tokens=max_output_tokens or self.default_generation_max_output_tokens,
+            # The judge path, now the busiest caller: three gates per question.
+            operation="generate_json",
         )
         if not response or not response.text:
             self.logger.error(
@@ -146,11 +189,15 @@ class CohereProvider(LLMInterface):
             input_type = CohereEnums.QUERY.value
 
         texts = [text] if isinstance(text, str) else text
-        response = self.client.embed(
-            model=self.embedding_model_id,
-            texts=[self.process_text(t) for t in texts],
-            input_type=input_type,
-            embedding_types=["float"],
+        response = self._call(
+            lambda: self.client.embed(
+                model=self.embedding_model_id,
+                texts=[self.process_text(t) for t in texts],
+                input_type=input_type,
+                embedding_types=["float"],
+            ),
+            # The call that 429'd mid-sweep on the trial key.
+            operation="embed_text",
         )
         if not response or not response.embeddings or not response.embeddings.float:
             self.logger.error(

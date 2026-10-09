@@ -49,6 +49,10 @@ services:
       # image deliberately contains no .env for them to fight with.
       POSTGRES_HOST: pgvector
       POSTGRES_PORT: 5432
+      # Same reason as POSTGRES_HOST: inside the compose network Langfuse answers to
+      # its service name on its INTERNAL port, not to the loopback port published on
+      # the host. The .env value (localhost:3002) is for scripts run outside Docker.
+      LANGFUSE_HOST: http://langfuse:3000
     depends_on:
       pgvector:
         # Wait for pg_isready, not just for the container to exist: the first
@@ -157,6 +161,54 @@ services:
       - "127.0.0.1:6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
+    networks:
+      - backend
+    restart: unless-stopped
+
+  # Langfuse — LLM tracing. One container, deliberately.
+  #
+  # v2, NOT v3: v3 requires ClickHouse, Redis and MinIO alongside Postgres, which is
+  # four more services on a host that already runs nine with ~2GB free. v2 needs a
+  # web container and a Postgres database, and traces are traces either way.
+  #
+  # It also shares the existing Postgres server rather than running its own, using a
+  # separate `langfuse` database. That saves a container; the trade is that Langfuse
+  # migrations now run on the same server as the app's data. Separate databases
+  # isolate them well enough for this, but a production deployment should split them.
+  langfuse:
+    image: langfuse/langfuse:2
+    container_name: customer_support_langfuse
+    ports:
+      - "127.0.0.1:3002:3000"
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USERNAME}:${POSTGRES_PASSWORD}@pgvector:5432/langfuse
+      - NEXTAUTH_URL=http://localhost:3002
+      - NEXTAUTH_SECRET=${LANGFUSE_NEXTAUTH_SECRET}
+      - SALT=${LANGFUSE_SALT}
+      - TELEMETRY_ENABLED=false
+      # Lets the first visitor create the owner account without an email server.
+      - AUTH_DISABLE_SIGNUP=false
+      # Headless provisioning: creates the org, project, owner and API keys on first
+      # boot, so the keys are known up front and nobody has to click through a UI to
+      # start tracing. Idempotent — ignored once the project exists.
+      - LANGFUSE_INIT_ORG_ID=handbook-org
+      - LANGFUSE_INIT_ORG_NAME=Handbook Assistant
+      - LANGFUSE_INIT_PROJECT_ID=handbook
+      - LANGFUSE_INIT_PROJECT_NAME=Handbook Assistant
+      - LANGFUSE_INIT_PROJECT_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_INIT_PROJECT_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_INIT_USER_EMAIL=${LANGFUSE_INIT_USER_EMAIL}
+      - LANGFUSE_INIT_USER_NAME=Omar
+      - LANGFUSE_INIT_USER_PASSWORD=${LANGFUSE_INIT_USER_PASSWORD}
+    depends_on:
+      pgvector:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+        reservations:
+          memory: 128m
     networks:
       - backend
     restart: unless-stopped

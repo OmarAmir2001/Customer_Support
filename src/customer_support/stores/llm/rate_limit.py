@@ -6,12 +6,17 @@ wording of the hint in the body — and every caller hits the same wall: the thr
 gates, generation, memory extraction and the promotion assessment all go to the same
 Groq account. One implementation here beats four copies that drift.
 
-**Why it exists.** A ramped load test against the free tier found the judge model
+**Why it exists.** A ramped load test against Groq's free tier found the judge model
 capped at 8,000 tokens/minute, reached at *five* concurrent users. Of 94 questions,
 5 were answered; all 110 failures were 429s. Groq had replied "Please try again in
 1.875s" every time, and the code ignored it — retrying twice immediately, so both
 retries hit the same limit. Because the judges fail closed, each one became an
 escalation while `/chat` returned 200 OK throughout.
+
+The app has since moved to a paid Cohere key, which removes that particular ceiling
+but not the need for this: a separate Cohere trial-key 429 on embeddings killed an
+evaluation sweep partway through, and the reports it left behind still carry
+`"ragas": null`. Both providers route through here now.
 
 **`time.sleep`, not `asyncio.sleep`, is correct here.** These SDKs are synchronous and
 every call already runs inside `asyncio.to_thread`, so the sleep blocks a worker
