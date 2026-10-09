@@ -1,0 +1,175 @@
+{
+  "run_at": "2026-10-08T10:55:42.012900+00:00",
+  "corpus_version": "c3c66a68af9e123156c213969859fafbc53851c7f5c9dce3fa279ad048239dd5",
+  "eval_sha256": "44906219777f9cba218890a69e713632ec75a6fbfb2f0cca1b427123bd66d72d",
+  "question_ids": [
+    "q001",
+    "q002",
+    "q042"
+  ],
+  "questions": 3,
+  "generation_model": "command-r-plus-08-2024",
+  "generation_max_tokens": 800,
+  "generation_temperature": 0.1,
+  "embedding_model": "embed-multilingual-light-v3.0",
+  "retrieval_top_k": 5,
+  "ragas_model": "command-r-08-2024",
+  "ragas_max_output_tokens": 4096,
+  "ragas_reasoning_effort": "low",
+  "evaluation_mode": "ragas",
+  "versions": {
+    "ragas": "0.4.3",
+    "mlflow": "3.16.1",
+    "openai": "2.52.0"
+  },
+  "report_path": "/home/omaramir/projects/Customer_Support/reports/ragas_c3c66a68af9e_20261008T105542012807Z.json",
+  "status": "complete",
+  "rows": [
+    {
+      "id": "q001",
+      "question": "كم عدد الساعات المعتمدة المطلوبة للحصول على درجة البكالوريوس؟",
+      "language": "ar",
+      "department": "CS",
+      "answerable": true,
+      "reference": "يحصل الطالب على درجة البكالوريوس متى استوفى ١٣٥ ساعة معتمدة، بشرط ألا يقل معدله التراكمي عن 2.0.",
+      "expected_article": "مادة (٢٤)",
+      "expected_sources": [
+        "CS_2023"
+      ],
+      "expected_citations": [
+        "CS_2023 — مادة (٢٤)"
+      ],
+      "retrieved_contexts": [
+        "### مادة (٢٤)\nيحصل الطالب على درجة البكالوريوس متى استوفى 135 ساعة معتمدة، بشرط ألا يقل معدله التراكمي عن 2.0، وبشرط عدم الاخلال بالمادة رقم (١٤) طوال مدة الدراسة. إذا أختل أحد الشرطين أو كلاهما، لا يحصل الطالب على الدرجة حتى يتم استيفاؤهما.",
+        "# لائحة برنامج بكالوريوس علوم الحاسب  \n### بنظام الساعات المعتمدة (١٣٥ ساعة)  \n**المعهد العالي لعلوم الحاسب ونظم المعلومات**\n**السادس من أكتوبر – الجيزة**  \nطبقاً للإطار المرجعي الصادر عن لجنة قطاع معاهد وشعب علوم الحاسب ونظم المعلومات\nالمشكلة بالقرار الوزاري رقم ١٢٠١ بتاريخ ٢٠٢١/٤/٦  \n---",
+        "### مادة (١٤)\nالحد الأقصى للساعات المعتمدة التي يسجلها الطالب في كل فصل دراسي، بخلاف الفصل الدراسي الأول للطلاب المستجدين، يرتبط بمعدله التراكمي كما يلي:  \n| المعدل التراكمي | الحد الأقصى |\n|----------------|-------------|\n| 3 فأكثر | 21 |\n| 2 – أقل من 3 | 18 |\n| 1 – أقل من 2 | 15 |\n| أقل من 1 | 12 |  \nأما في أول فصل للطالب المستجد بالمعهد، حيث لا يكون للطالب معدل تراكمي بعد، فيسمح له بالتسجيل حتى ٢١ ساعة.  \nأما بالنسبة للفصل الصيفي، إذا اختار الطالب التسجيل فيه، فحده الأقصى كما يلي:  \n| المعدل التراكمي | الحد الأقصى |\n|----------------|-------------|\n| 3 فأكثر | 9 |\n| أقل من 3 | 6 |",
+        "| ع ح ٣٠٩ | CS 309 | Microprocessor and Assembly Language | مقدمة في المعالجات الدقيقة ولغة التجميع | 3 | CS 202 |\n| ع ح ٤٠١ | CS 401 | Artificial Intelligence | الذكاء الاصطناعي | 3 | CS 203 |\n| ع ح ٤٠٢ | CS 402 | Information and Computer Networks Security | تأمين شبكات الحاسبات والمعلومات | 3 | CS 305 |\n| ع ح ٤٠٣ | CS 403 | Machine Learning | تعلم الآلة | 3 | BS 103 |\n| ع ح ٤٠٤ | CS 404 | Distributed Computing | الحوسبة الموزعة | 3 | CS 303 |\n| ع ح ٤٩٨ | CS 498 | Graduation Project 1 | مشروع التخرج ١ | 3 | Passing 95 Credit Hours |\n| ع ح ٤٩٩ | CS 499 | Graduation Project 2 | مشروع التخرج ٢ | 3 | CS 498 |  \n#### ثانياً: المقررات الاختيارية (إجمالي 21 ساعة معتمدة) — بما لا يخل بمعايير الأكاديمية الوطنية (NARS)  \n| الكود | Code | Course Title | اسم المقرر | الساعات المعتمدة | Prerequisite (متطلب) |\n|-------|------|--------------|------------|-----------------|----------------------|",
+        "Question: كم عدد الساعات المعتمدة المطلوبة للتخرج من برنامج علوم الحاسب؟\nAnswer: The CS programme requires 135 credit hours to graduate."
+      ],
+      "retrieved_sources": [
+        "CS_2023",
+        "CS_2023",
+        "CS_2023",
+        "CS_2023",
+        "instructor_resolved"
+      ],
+      "retrieved_sections": [
+        "لائحة برنامج بكالوريوس علوم الحاسب > أحكام وشروط الدراسة > مادة (٢٤)",
+        "لائحة برنامج بكالوريوس علوم الحاسب > بنظام الساعات المعتمدة (١٣٥ ساعة)",
+        "لائحة برنامج بكالوريوس علوم الحاسب > أحكام وشروط الدراسة > مادة (١٤)",
+        "لائحة برنامج بكالوريوس علوم الحاسب > برامج المعهد الدراسية > برنامج بكالوريوس علوم الحاسب",
+        "None"
+      ],
+      "answer": "عدد الساعات المعتمدة المطلوبة للحصول على درجة البكالوريوس هو 135 ساعة. (مادة (٢٤)، لائحة برنامج بكالوريوس علوم الحاسب > أحكام وشروط الدراسة)",
+      "ragas": {
+        "context_precision": 1.0,
+        "context_recall": 1.0,
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.8912
+      }
+    },
+    {
+      "id": "q002",
+      "question": "How many credit hours are required to graduate with a bachelor's degree?",
+      "language": "en",
+      "department": "CS",
+      "answerable": true,
+      "reference": "A student is awarded the bachelor's degree upon completing 135 credit hours, provided their cumulative GPA is not below 2.0.",
+      "expected_article": "مادة (٢٤)",
+      "expected_sources": [
+        "CS_2023"
+      ],
+      "expected_citations": [
+        "CS_2023 — مادة (٢٤)"
+      ],
+      "retrieved_contexts": [
+        "### مادة (٢٤)\nيحصل الطالب على درجة البكالوريوس متى استوفى 135 ساعة معتمدة، بشرط ألا يقل معدله التراكمي عن 2.0، وبشرط عدم الاخلال بالمادة رقم (١٤) طوال مدة الدراسة. إذا أختل أحد الشرطين أو كلاهما، لا يحصل الطالب على الدرجة حتى يتم استيفاؤهما.",
+        "---  \n**CS 498 Graduation Project 1 — ع ح ٤٩٨ مشروع التخرج ١**\n**Prerequisite: Passing 95 Credit Hours (إجباري)**  \nThis course is intended to give the student a chance to put to practical use all the knowledge acquired since starting the program. It focuses on a specific problem, preferably a real life one, and culminates in an innovative software/hardware solution. This course in particular should develop the ground work for the required solution, especially a meticulous systems analysis study. A system design phase should be carried out, with a prototype or some preliminary implementation highly recommended. The student can work individually or within a group of a reasonable size.  \n---  \n**CS 499 Graduation Project 2 — ع ح ٤٩٩ مشروع التخرج ٢**\n**Prerequisite: CS 498 Graduation Project 1 (إجباري)**",
+        "### مادة (١٤)\nالحد الأقصى للساعات المعتمدة التي يسجلها الطالب في كل فصل دراسي، بخلاف الفصل الدراسي الأول للطلاب المستجدين، يرتبط بمعدله التراكمي كما يلي:  \n| المعدل التراكمي | الحد الأقصى |\n|----------------|-------------|\n| 3 فأكثر | 21 |\n| 2 – أقل من 3 | 18 |\n| 1 – أقل من 2 | 15 |\n| أقل من 1 | 12 |  \nأما في أول فصل للطالب المستجد بالمعهد، حيث لا يكون للطالب معدل تراكمي بعد، فيسمح له بالتسجيل حتى ٢١ ساعة.  \nأما بالنسبة للفصل الصيفي، إذا اختار الطالب التسجيل فيه، فحده الأقصى كما يلي:  \n| المعدل التراكمي | الحد الأقصى |\n|----------------|-------------|\n| 3 فأكثر | 9 |\n| أقل من 3 | 6 |",
+        "### مادة (٢٣)\nيقدم الطالب في نهاية دراسته بالمعهد، وبعد استيفاء ٪٧٠ على الأقل من الساعات المطلوبة للتخرج، مشروعاً للتخرج، في الموضوعات التي يحددها مجالس الأقسام العلمية المختصة. ويتفرغ الطالب لمشروع التخرج فترة لا تقل عن ٤ أسابيع بعد نهاية الامتحانات النهائية. يسجل الطالب المشروع كمقررين متتاليين، أحدهما متطلب للآخر، مدة كل منهما ٣ ساعات معتمدة.",
+        "Question: كم عدد الساعات المعتمدة المطلوبة للتخرج من برنامج علوم الحاسب؟\nAnswer: The CS programme requires 135 credit hours to graduate."
+      ],
+      "retrieved_sources": [
+        "CS_2023",
+        "CS_2023",
+        "CS_2023",
+        "CS_2023",
+        "instructor_resolved"
+      ],
+      "retrieved_sections": [
+        "لائحة برنامج بكالوريوس علوم الحاسب > أحكام وشروط الدراسة > مادة (٢٤)",
+        "لائحة برنامج بكالوريوس علوم الحاسب > القسم الثاني: المقررات > توصيف المقررات الدراسية",
+        "لائحة برنامج بكالوريوس علوم الحاسب > أحكام وشروط الدراسة > مادة (١٤)",
+        "لائحة برنامج بكالوريوس علوم الحاسب > أحكام وشروط الدراسة > مادة (٢٣)",
+        "None"
+      ],
+      "answer": "135 credit hours are required to graduate with a bachelor's degree. (Excerpt 1, Excerpt 5)",
+      "ragas": {
+        "context_precision": 0.7,
+        "context_recall": 1.0,
+        "faithfulness": 0.5,
+        "answer_relevancy": 0.8739
+      }
+    },
+    {
+      "id": "q042",
+      "question": "ما هي الدرجة التي يمنحها المعهد لطلاب نظم المعلومات؟",
+      "language": "ar",
+      "department": "IS",
+      "answerable": true,
+      "reference": "يمنح المعهد درجة بكالوريوس نظم المعلومات، وتندرج تحتها التخصصات الدقيقة المرخص بها للمعهد.",
+      "expected_article": "مادة (٤)",
+      "expected_sources": [
+        "IS_2023"
+      ],
+      "expected_citations": [
+        "IS_2023 — مادة (٤)"
+      ],
+      "retrieved_contexts": [
+        "### مادة (٤)\nيمنح المعهد درجة:\n- بكالوريوس نظم المعلومات وتندرج تحته التخصصات الدقيقة المرخص بها للمعهد.",
+        "## رؤية المعهد | Vision  \nأن يكون المعهد العالي لعلوم الحاسب ونظم المعلومات مثلًا يحتذى به، وأن يكون خريجوه على مستوى عالٍ، لا يقل عن مستوى خريجي الجامعات والمعاهد المناظرة. يتأتى ذلك بابتكار مجالات جديدة وتخصصات تتسق مع توقعات المستقبل، وتشجيع أعضاء هيئة التدريس للقيام بأدوار مختلفة ومتنوعة وملبية للتحديات. أيضًا التركيز على التميز والحداثة والنزاهة والابتكار، والتأكيد على أهمية الأخلاق مع العلم، وتعميق مفهوم الحق والواجب وحسن أداء العمل لدى الطلاب.  \n---",
+        "| Big Data Analysis | تحليل البيانات الكبيرة |\n| Computer Arabization | تعريب الحاسب |\n| Virtual Reality | الواقع الافتراضي |\n| Computer Vision Systems | نظم الرؤية بالحاسب |\n| Internet of Things (IoT) | إنترنت الأشياء |\n| Software Testing and Quality Assurance | اختبار البرمجيات وضمان الجودة |\n| Cyber Security | الأمن السيبراني |\n| Human Computer Interaction | تفاعل الإنسان مع الحاسب |\n| Natural Language Processing | معالجات اللغات الطبيعية |\n| Soft Computing | الحوسبة المرنة |\n| Knowledge Discovery | اكتشاف المعرفة |\n| Pattern Recognition | التعرف على الأنماط |\n| Game Programming | برمجة الألعاب |\n| Deep Learning | التعلم العميق |  \n**٢ - قسم نظم المعلومات** — يضم أعضاء هيئة تدريس والهيئة المعاونة يقومون على تدريس كل مقررات برنامج نظم المعلومات في المعهد (والمشار إليها كوديًا بالحرفين \"ن م\" / \"IS\")، وكل ما يتصل بتخصص نظم المعلومات بصفة عامة ويقوم بتدريس المقررات التالية:  \n| Course Title | اسم المقرر |\n|--------------|------------|",
+        "# لائحة برنامج بكالوريوس نظم المعلومات  \n## Bachelor of Information Systems Program Curriculum  \n**المعهد العالي لعلوم الحاسب ونظم المعلومات — السادس من أكتوبر، الجيزة**\n**High Institute of Computer Science and Information Systems — 6th of October, Giza**  \nبنظام الساعات المعتمدة **(١٣٥ ساعة)**  \nطبقًا للإطار المرجعي الصادر عن لجنة قطاع معاهد وشعب علوم الحاسب ونظم المعلومات\nالمشكّلة بالقرار الوزاري رقم **١٢٠١** بتاريخ **٢٠٢١/٤/٦**  \n---",
+        "## مقدمة | Introduction  \nتأسس المعهد العالي لعلوم الحاسب ونظم المعلومات عام ١٩٩٤ بغرض تخريج طلاب على أعلى مستوى علمي وعملي يمكنهم أن يتحصلوا على وظائف مرموقة في سوق العمل المصري والعربي وحتى العالمي.  \n---"
+      ],
+      "retrieved_sources": [
+        "IS_2023",
+        "IS_2023",
+        "IS_2023",
+        "IS_2023",
+        "IS_2023"
+      ],
+      "retrieved_sections": [
+        "القسم الأول: نظام الدراسة > أحكام وشروط الدراسة | Study Regulations > مادة (٤)",
+        "لائحة برنامج بكالوريوس نظم المعلومات > رؤية المعهد | Vision",
+        "القسم الأول: نظام الدراسة > أقسام المعهد العلمية | Academic Departments",
+        "لائحة برنامج بكالوريوس نظم المعلومات > Bachelor of Information Systems Program Curriculum",
+        "لائحة برنامج بكالوريوس نظم المعلومات > مقدمة | Introduction"
+      ],
+      "answer": "يمنح المعهد درجة بكالوريوس نظم المعلومات.",
+      "ragas": {
+        "context_precision": 1.0,
+        "context_recall": 1.0,
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.5161
+      }
+    }
+  ],
+  "retrieval_accuracy": {
+    "answerable": 3,
+    "expected_article_retrieved": 3,
+    "expected_article_hit_rate": 1.0,
+    "department_filter_leaks": [],
+    "unanswerable_that_retrieved_nothing": 0,
+    "unanswerable_total": 0,
+    "ground_truth_token_recall": 0.771,
+    "mean_context_chars": 2145
+  },
+  "ragas_scored": 3,
+  "ragas": {
+    "context_precision": 0.9,
+    "context_recall": 1.0,
+    "faithfulness": 0.8333,
+    "answer_relevancy": 0.7604
+  }
+}

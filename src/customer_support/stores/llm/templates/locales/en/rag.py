@@ -55,9 +55,19 @@ system_prompt = Template(
             "- If the excerpts do not contain the answer, say so plainly and "
             "apologise. Never guess, and never fill a gap from general knowledge.",
             "- Answer in English.",
-            "- Be concise. Give the answer the question asked for and nothing more.",
+            # "Be concise" alone is not safe across models. gpt-oss-120b read it as
+            # "one short sentence"; command-r-plus read it as "135." — literally the
+            # number and nothing else, with no unit and no citation. Both gates
+            # scored that 1.0, because it IS grounded and it DOES answer the
+            # question; they verify grounding and relevance, not usefulness. So the
+            # floor has to be stated in the prompt rather than assumed.
+            "- Be concise: a complete sentence or two, not a bare value. Answer the "
+            "question asked and nothing more, but always state WHAT the number or "
+            "fact refers to, including its unit.",
             "- Be polite and respectful.",
-            "- When the excerpt you used names a handbook section, cite it.",
+            "- ALWAYS cite the handbook section or article your answer came from, "
+            "naming it as the excerpt labels it. An answer a student cannot verify "
+            "against the handbook is not an acceptable answer.",
         ]
     )
 )

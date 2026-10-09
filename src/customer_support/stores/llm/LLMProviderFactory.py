@@ -27,5 +27,11 @@ class LLMProviderFactory:
                 default_input_max_characters=self.config.INPUT_DEFAULT_MAX_CHARACTERS,
                 default_generation_max_output_tokens=self.config.GENERATION_DEFAULT_MAX_TOKENS,
                 default_generation_temperature=self.config.GENERATION_DEFAULT_TEMPERATURE,
+                # Same policy as the OpenAI provider. Cohere is now the primary
+                # backend for generation, judging AND embeddings, so it is the one
+                # that most needs it.
+                rate_limit_max_retries=self.config.PROVIDER_RATE_LIMIT_MAX_RETRIES,
+                rate_limit_max_wait=self.config.PROVIDER_RATE_LIMIT_MAX_WAIT_SECONDS,
+                rate_limit_total_budget=self.config.PROVIDER_RATE_LIMIT_TOTAL_BUDGET_SECONDS,
             )
         return None

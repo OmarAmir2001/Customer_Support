@@ -273,3 +273,66 @@ def test_the_providers_own_hint_is_preferred_over_backoff_across_retries():
     call_with_rate_limit_retry(call, operation="generate_json", sleep=sleep, **POLICY)
 
     assert sleep.waits == [1.5, 1.5]
+
+
+def test_the_cohere_provider_is_also_wired_to_the_retry():
+    """The gap this closed.
+
+    B1 wrapped only OpenAIProvider. Cohere went without a retry policy, and the
+    omission cost a real run: an evaluation sweep died partway through on Cohere's
+    `TooManyRequestsError`, and the reports it left behind still carry
+    `"ragas": null`. Cohere is now the primary backend for generation, judging and
+    embeddings, so this is the provider that most needs covering.
+    """
+    from customer_support.stores.llm.providers.CohereProvider import CohereProvider
+
+    calls = {"n": 0}
+
+    class TooManyRequestsError(Exception):
+        """Named to match Cohere's real class — is_rate_limit duck-types on it."""
+
+    class FakeClient:
+        def chat(self, **_kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise TooManyRequestsError("Trial key, limited to 40 API calls / minute")
+            return type("R", (), {"text": '{"score": 1.0, "reason": "ok"}'})()
+
+    provider = CohereProvider(api_key="test-key", rate_limit_max_retries=2)
+    provider.set_generation_model("command-r-08-2024")
+    provider.client = FakeClient()
+
+    raw = provider.generate_json(prompt="q", system_prompt="s")
+
+    assert calls["n"] == 2, "the 429 was not retried — CohereProvider is not wired up"
+    assert raw == '{"score": 1.0, "reason": "ok"}'
+
+
+def test_cohere_generate_text_sends_a_string_not_a_role_dict():
+    """A regression guard for a bug that hid for months.
+
+    `construct_prompt` returns {"role", "text"} — correct for `chat_history`, and
+    wrong for v1 chat's `message`, which takes plain text. Passing the dict returns a
+    bare 422 UnprocessableEntityError with no useful body. Nobody noticed while
+    Cohere was only doing embeddings; it broke every answer the moment Cohere became
+    the generation backend.
+    """
+    from customer_support.stores.llm.providers.CohereProvider import CohereProvider
+
+    captured = {}
+
+    class FakeClient:
+        def chat(self, **kwargs):
+            captured.update(kwargs)
+            return type("R", (), {"text": "an answer"})()
+
+    provider = CohereProvider(api_key="test-key")
+    provider.set_generation_model("command-r-plus-08-2024")
+    provider.client = FakeClient()
+
+    assert provider.generate_text("what are the graduation requirements?") == "an answer"
+    assert isinstance(captured["message"], str), (
+        f"message must be a string, got {type(captured['message']).__name__} — "
+        "Cohere v1 chat rejects a role dict with a 422"
+    )
+    assert "graduation" in captured["message"]

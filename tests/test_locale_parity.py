@@ -191,3 +191,64 @@ def test_parser_renders_a_real_prompt():
     parser = TemplateParser(primary_language=FALLBACK_LANGUAGE)
     rendered = parser.get("rag", "footer_prompt", {"question": "when are exams?"})
     assert "when are exams?" in rendered
+
+
+# --------------------------------------------------- detecting from the question
+#
+# The lowest rung of the negotiation chain, added after a model switch exposed that
+# it was missing: gpt-oss-120b answered Arabic questions in Arabic regardless of the
+# prompt, so nobody noticed the negotiation never looked at the question.
+# command-r-plus obeys "Answer in English" and started answering Arabic questions in
+# English.
+
+
+def test_an_arabic_question_is_detected():
+    from customer_support.helpers.locale import detect_question_language
+
+    assert detect_question_language("كم عدد الساعات المعتمدة المطلوبة للتخرج؟") == "ar"
+
+
+def test_an_english_question_is_not_claimed_as_arabic():
+    from customer_support.helpers.locale import detect_question_language
+
+    assert detect_question_language("How many credit hours are required?") is None
+
+
+def test_a_mostly_english_question_with_some_arabic_still_counts_as_arabic():
+    """A real shape: an Arabic question carrying an English course code. The
+    threshold is low on purpose, because this is still an Arabic question."""
+    from customer_support.helpers.locale import detect_question_language
+
+    assert detect_question_language("كم ساعة في مقرر CS201؟") == "ar"
+
+
+def test_digits_and_punctuation_alone_detect_nothing():
+    from customer_support.helpers.locale import detect_question_language
+
+    assert detect_question_language("135?") is None
+    assert detect_question_language("") is None
+    assert detect_question_language(None) is None
+
+
+def test_a_stated_preference_always_beats_the_detected_language():
+    """The rule that matters. A bilingual student may type Arabic and want English,
+    and a detector must never override a person saying what they want."""
+    from customer_support.helpers.locale import negotiate_language
+    from customer_support.stores.llm.templates import TemplateParser
+
+    parser = TemplateParser(primary_language="en", default_language="en")
+
+    assert negotiate_language(parser, requested="en", question="كم عدد الساعات المعتمدة؟") == "en"
+    assert negotiate_language(parser, profile_language="en", question="كم عدد الساعات؟") == "en"
+    assert negotiate_language(parser, accept_language="en-GB,en;q=0.9", question="كم ساعة؟") == "en"
+
+
+def test_the_question_is_used_when_nothing_was_stated():
+    from customer_support.helpers.locale import negotiate_language
+    from customer_support.stores.llm.templates import TemplateParser
+
+    parser = TemplateParser(primary_language="en", default_language="en")
+
+    assert negotiate_language(parser, question="كم عدد الساعات المعتمدة؟") == "ar"
+    # and an English question still lands on the configured primary
+    assert negotiate_language(parser, question="How many credit hours?") == "en"

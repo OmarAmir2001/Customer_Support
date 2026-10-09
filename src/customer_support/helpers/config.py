@@ -58,31 +58,56 @@ class Settings(BaseSettings):
     VECTOR_DB_DEFAULT_VECTOR_SIZE: int = 384
 
     # --- offline evaluation ---
-    # Which model RAGAS uses to judge. Defaults to the generation model rather than
-    # the judge model on purpose: RAGAS makes several calls per metric per question,
-    # and the judge model is the one already capped at 8,000 TPM. Pointing both at it
-    # would make an evaluation run starve the thing it is evaluating.
+    # Which model RAGAS uses to judge.
+    #
+    # Deliberately left on GROQ while the app itself runs on Cohere. That is not an
+    # oversight: evaluation load and serving load then land on different providers,
+    # so scoring a run cannot throttle the system being scored. Groq's free tier is
+    # ample for this because nothing else uses it any more.
+    #
+    # Point it at a Cohere model if you want a single provider, but note RAGAS reaches
+    # the model through LangChain rather than through this project's providers, so it
+    # would need `langchain-cohere` installed.
+    # Which provider RAGAS judges with. Separate from GENERATION_BACKEND because
+    # evaluation and serving have different constraints.
+    #
+    # COHERE is the default because Groq's free tier cannot carry a sweep: RAGAS
+    # prompts carry the full retrieved context, so four metrics over twenty questions
+    # exceeded the 8,000 TPM cap within the second question. COHERE also avoids an
+    # entire bug class — our Cohere provider is synchronous, so it has none of the
+    # event-loop affinity that made the langchain_openai client fail between metrics.
+    #
+    # OPENAI (Groq) still works for small runs and keeps evaluation spend off the
+    # paid key.
+    RAGAS_BACKEND: str = "COHERE"
     RAGAS_MODEL_ID: str | None = None
     RAGAS_API_URL: str | None = None
-    # RAGAS runs its metric jobs concurrently and defaults to 16 workers. Against a
-    # free tier capped at 8,000 tokens/minute that produced a wall of TimeoutErrors
-    # and a `nan` for one whole metric — every job for it failed.
+    # RAGAS runs its metric jobs concurrently and defaults to 16 workers, which
+    # produced a wall of TimeoutErrors and a `nan` for one whole metric — every job
+    # for it failed.
     #
-    # Note RAGAS does NOT go through this project's provider, so the retry policy in
+    # Note RAGAS does NOT go through this project's providers, so the retry policy in
     # stores/llm/rate_limit.py does not protect it. Concurrency control here is the
-    # only lever. Raise it on a paid tier.
+    # only lever, which is why this is low rather than the library default.
     RAGAS_MAX_WORKERS: int = 2
     RAGAS_TIMEOUT_SECONDS: int = 300
+    # JSON metric verdicts need room after the reasoning tokens. These settings
+    # apply only to the offline evaluator, not to the student-facing generator.
+    RAGAS_MAX_OUTPUT_TOKENS: int = 4096
+    RAGAS_REASONING_EFFORT: str | None = "low"
 
     # --- provider rate limiting ---
-    # A load test found the reason these exist. Groq's free tier caps the judge model
-    # at 8,000 tokens/minute, which was reached at FIVE concurrent users: of 94
+    # A load test found the reason these exist. On Groq's free tier the judge model
+    # was capped at 8,000 tokens/minute, reached at FIVE concurrent users: of 94
     # questions only 5 were answered, and all 110 failures were 429s. The provider
     # replies "Please try again in 1.875s" — and the code ignored it, retrying twice
     # immediately so both retries hit the same limit. Every one of those became an
     # escalation, because the judges fail closed.
     #
-    # Honouring the hint converts almost all of that into a short wait.
+    # The app now runs on a PAID Cohere key, so that specific ceiling is gone. These
+    # settings stay, and still matter: a paid key has limits too, a separate trial-key
+    # 429 on Cohere embeddings once killed an evaluation sweep mid-run, and a retry
+    # policy is worth having before you need it rather than after.
     PROVIDER_RATE_LIMIT_MAX_RETRIES: int = 3
     # Per-sleep ceiling. The provider's hint is trusted only up to this: a bad or
     # hostile Retry-After must not be able to park a student's request for a minute.
@@ -157,6 +182,14 @@ class Settings(BaseSettings):
     PROMOTION_CONTRADICTION_THRESHOLD: float = 0.6
     # How much handbook context the contradiction check is shown.
     PROMOTION_CONTEXT_TOP_K: int = 5
+
+    # --- tracing (Langfuse) ---
+    # Both keys empty means tracing is OFF and every call in helpers/tracing.py is a
+    # no-op. That is the default on purpose: the test suite must not need a tracing
+    # backend, and the project must run for someone who has not stood Langfuse up.
+    LANGFUSE_PUBLIC_KEY: str = ""
+    LANGFUSE_SECRET_KEY: str = ""
+    LANGFUSE_HOST: str = "http://localhost:3002"
 
     # --- escalation ---
     ESCALATION_STUDENT_MESSAGE: str = (
