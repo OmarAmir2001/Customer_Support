@@ -159,3 +159,12 @@ RUNBOOK.md
 FINAL_PROJECT_PLAN.md
 AI_HANDOFF.md
 notes/
+
+# --- evaluation run artifacts ---
+# Per-run output, not deliverables. `reports/experiments/` alone is ~5MB of saved
+# answers that exist so an interrupted sweep can resume, and every RAGAS run drops
+# another timestamped report. The ones worth keeping get stable names
+# (reports/ragas_latest.json, reports/mlflow_comparison.png) and stay tracked.
+reports/experiments/
+reports/ragas_*T*Z.json
+reports/sweep_*.log
