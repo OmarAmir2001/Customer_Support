@@ -5,6 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request, status
 
+from customer_support.helpers.citations import citations_for
 from customer_support.helpers.locale import negotiate_language
 from customer_support.helpers.logging_config import get_logger, set_correlation_id
 from customer_support.helpers.tracing import finish_trace, set_current_trace, start_trace
@@ -16,8 +17,25 @@ logger = get_logger(__name__)
 
 chat_router = APIRouter(prefix="/api/v1/chat", tags=["Chat"])
 
+#: The rubric names the endpoint `/ask`; this project grew up calling it
+#: `/api/v1/chat`, because a thread_id and a transcript make it a conversation
+#: rather than a one-shot question. Rather than rename and break every existing
+#: client, the SAME handler is registered on both paths — one function, so the two
+#: can never drift into different behaviour.
+#:
+#: Note the BentoML service also exposes `/ask`, on its own port, and that one
+#: STREAMS and is ungated. They are different endpoints with the same name by
+#: rubric, and the README says which is which.
+ask_router = APIRouter(tags=["Chat"])
+
 
 @chat_router.post("", response_model=ChatResponse, status_code=status.HTTP_200_OK)
+@ask_router.post(
+    "/ask",
+    response_model=ChatResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Alias of POST /api/v1/chat",
+)
 async def chat(
     request: Request,
     payload: ChatRequest,
@@ -144,6 +162,10 @@ async def chat(
         thread_id=thread_id,
         answer=final_state.get("answer") or "",
         escalated=escalated,
+        # Only for an answer that passed every gate. On the escalation path the
+        # chunks were retrieved but the answer built from them was withheld, so
+        # citing them would attach evidence to the holding message.
+        sources=[] if escalated else citations_for(final_state.get("retrieved_chunks")),
         ticket_id=final_state.get("ticket_id"),
         escalation_reason=final_state.get("gate_reason") if escalated else None,
     )

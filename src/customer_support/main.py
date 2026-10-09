@@ -24,7 +24,7 @@ from customer_support.helpers.tracing import configure_tracing, shutdown_tracing
 from customer_support.models.ProfileModel import ProfileModel
 from customer_support.models.TicketModel import TicketModel
 from customer_support.routers.admin import admin_router
-from customer_support.routers.chat import chat_router
+from customer_support.routers.chat import ask_router, chat_router
 from customer_support.routers.escalation import escalation_router
 from customer_support.routers.health import base_router
 from customer_support.routers.profile import profile_router
@@ -234,4 +234,6 @@ app.include_router(base_router)
 app.include_router(profile_router)
 app.include_router(admin_router)
 app.include_router(chat_router)
+# The same handler as chat_router, on the rubric's `/ask` path. See chat.py.
+app.include_router(ask_router)
 app.include_router(escalation_router)
