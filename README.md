@@ -10,7 +10,7 @@
 
 > An AI agent that answers student questions from the CS and IS department handbooks, escalates the ones it cannot answer confidently to a human advisor, and learns from resolved escalations — through a human-gated promotion step, not automatically.
 
-**Status:** 🟢 The whole loop runs end to end — retrieval, three orthogonal judge gates, escalation to a human, resolution delivered back into the same conversation, and human-gated promotion into the knowledge base. Dockerised, instrumented with Prometheus and Grafana, 115 tests in CI.
+**Status:** 🟢 The whole loop runs end to end — retrieval, three orthogonal judge gates, escalation to a human, resolution delivered back into the same conversation, and human-gated promotion into the knowledge base. Dockerised, instrumented with Prometheus, Grafana and Langfuse, evaluated offline with RAGAS, 250 tests in CI.
 
 ---
 
@@ -39,45 +39,61 @@ This is the second project in a 4-part AI engineering portfolio, building on pat
 
 ## Architecture
 
-```
-POST /api/v1/chat
-   │
-   ▼
-retrieve_node            embed query → pgvector search → department filter →
-   │                     handbook-precedence ordering
-   ▼
-grade_node               Gate 1: context relevance (pre-generation, cheapest first)
-   │
-   ├── fails ──────────► escalate_node ──► ticket (pending) ──► RUN ENDS
-   │                                       "I've escalated this to an advisor."
-   └── passes
-          │
-          ▼
-   generate_node         answer built only from the retrieved excerpts
-          │
-          ├── no answer ─► escalate_node ──► RUN ENDS
-          └── drafted
-                 │
-                 ▼
-          judge_node     Gate 2a: faithfulness   ┐ run concurrently — independent
-                         Gate 2b: answer relevance ┘ checks, so no added latency
-                 │
-                 ├── either fails ─► escalate_node ──► RUN ENDS
-                 └── both pass ────► END  (answer returned to the student)
+Three diagrams, because the system has three shapes that do not fit in one: what
+happens to a question, what happens to a ticket afterwards, and what is actually
+deployed.
+
+### What happens to one question
+
+```mermaid
+flowchart TD
+    Q["POST /api/v1/chat — also POST /ask"] --> R["retrieve_node<br/>embed query, pgvector search,<br/>department filter, handbook precedence"]
+    R --> G1{"Gate 1: context relevance<br/>pre-generation, cheapest first"}
+
+    G1 -->|fails| ESC["escalate_node"]
+    G1 -->|passes| GEN["generate_node<br/>answer built only from the excerpts"]
+
+    GEN -->|no answer| ESC
+    GEN -->|drafted| G2{"Gate 2a: faithfulness<br/>Gate 2b: answer relevance<br/>run concurrently"}
+
+    G2 -->|either fails| ESC
+    G2 -->|both pass| PII["redact PII"]
+    PII --> OUT(["answer plus sources — run ends"])
+
+    ESC --> TICKET[("ticket: pending<br/>question, gate scores,<br/>the excerpts the bot saw")]
+    TICKET --> HOLD(["holding message — run ends"])
 ```
 
 Gate 1 scores **coverage** of the retrieved excerpts, before paying for a generation call. Gate 2a decomposes the drafted answer into individual claims and scores `supported / total`. Gate 2b deliberately **does not see the excerpts** — an answer can be perfectly grounded and still answer the wrong question, and showing it the excerpts would reintroduce exactly the blind spot faithfulness already has.
 
-**Resolution — a separate request, hours or days later:**
+Redaction runs **after** the gates, not before: the judges score the answer the model actually produced, and scoring a string containing `[PHONE]` against the excerpts would read as an unsupported claim and escalate a good answer.
+
+### What happens to the ticket, hours or days later
+
+The graph run is over. Nothing is parked in memory waiting for a human — an open
+ticket costs a database row, which is what survives a restart.
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending: a gate failed, ticket written
+    pending --> under_review: claim
+    pending --> rejected: reject (reason required)
+    pending --> duplicate: not exposed over HTTP
+    under_review --> resolved: resolve (+ optionally promote)
+    under_review --> rejected: reject
+    under_review --> pending: release
+    resolved --> closed: close
+    resolved --> reopened: reopen (un-promotes)
+    rejected --> reopened: reopen
+    closed --> reopened: reopen
+    reopened --> under_review: it already has history, so never back to pending
+    duplicate --> [*]
+```
+
+Resolving does two derived writes, both idempotent and repairable from the ticket alone, so neither can fail the advisor's request after their answer has committed:
 
 ```
-Advisor lists pending tickets       GET  /api/v1/escalation/tickets?ticket_status=pending
-   │                                    (question, which gate tripped and why,
-   ▼                                     and the excerpts the bot actually saw)
-claims one                          POST /api/v1/escalation/tickets/{id}/claim   → under_review
-   │
-   ▼
-submits an answer                   POST /api/v1/escalation/tickets/{id}/resolve → resolved
+POST /api/v1/escalation/tickets/{id}/resolve
    │
    ├─► written into the persisted thread state, keyed by the ticket's thread_id
    │   → the student reads it from GET /api/v1/chat/{thread_id} on their next visit
@@ -86,7 +102,52 @@ submits an answer                   POST /api/v1/escalation/tickets/{id}/resolve
        tagged with ticket_id, via delete-then-insert so a re-sync cannot duplicate it
 ```
 
-Both derived writes are idempotent and repairable from the ticket alone, so neither can fail the advisor's request after their answer has committed.
+The advisor queue (`GET /api/v1/escalation/tickets?ticket_status=pending`) hands over the question, which gate tripped and why, and the excerpts the bot actually saw — so the advisor is not re-deriving what went wrong.
+
+### What is deployed
+
+```mermaid
+flowchart LR
+    subgraph edge["published"]
+        NGINX["nginx :80<br/>the only port on 0.0.0.0"]
+    end
+
+    subgraph app["application"]
+        API["fastapi :8000<br/>4 uvicorn workers"]
+        BENTO["bentoml :3001<br/>streaming /ask, ungated"]
+    end
+
+    subgraph persistence["state"]
+        PG[("pgvector :5432<br/>tickets, chunks, profiles,<br/>checkpoints, vectors")]
+    end
+
+    subgraph obs["observability"]
+        PROM["prometheus :9090"]
+        GRAF["grafana :3000"]
+        LF["langfuse :3002"]
+        MLF["mlflow :5000<br/>offline only — the retrieval<br/>config registry, not a request path"]
+    end
+
+    subgraph providers["model providers"]
+        GROQ["Groq — generation"]
+        COHERE["Cohere — embeddings + judges"]
+    end
+
+    NGINX --> API
+    API --> PG
+    BENTO --> PG
+    API --> GROQ
+    API --> COHERE
+    BENTO --> GROQ
+    PROM -->|scrape| API
+    PROM -->|scrape| PG
+    GRAF --> PROM
+    API -->|traces| LF
+    LF --> PG
+    MLF --> PG
+```
+
+Everything except nginx binds to `127.0.0.1`. Postgres is shared by the app, Langfuse and MLflow as separate databases — one server, three schemas, because three Postgres containers on a laptop is a worse trade than one with three databases.
 
 ---
 
@@ -114,10 +175,15 @@ Verified end to end against real Postgres and live model calls:
 - ✅ **Section-aware chunking** — markdown splits on its own headings, so a chunk's `section` is a real citable path (`... > أحكام وشروط الدراسة > مادة (١٠)`) rather than a character offset.
 - ✅ **Idempotent handbook re-ingest** — `sync_sections` delete-then-inserts per `(source, section)`, so pushing twice replaces rather than duplicates, with no full collection rebuild.
 - ✅ **A reproducible corpus** — `dvc repro` rebuilds it from tracked handbooks and `params.yaml`, deterministically, with eight validation checks that refuse to write a bad corpus. Its content hash is the data version a metric can be attributed to.
-- ✅ **One-command Docker setup** via `make up`, a Locust load profile, and 115 passing tests that need no database.
+- ✅ **Three-command Docker setup** via `make up`, a Locust load profile, and 250 passing tests that need no database, no API keys and no configuration.
 - ✅ **Metrics that stay bounded** — Prometheus + Grafana, with request labels keyed on the *route template*. `/api/v1/chat/{thread_id}` is one series; labelling by raw path would mint a permanent series per conversation UUID and grow until Prometheus runs out of memory. Counters are recorded in a `finally`, so unhandled exceptions appear in the error rate instead of vanishing, and the registry is multiprocess-aware because uvicorn runs several workers.
 - ✅ **Metrics that describe *this* system, not a generic web app** — `customer_support_questions_total{outcome,failed_gate,department}` and `customer_support_judge_failures_total{gate}`. The second is the one that matters: because the judges fail closed, a degrading model provider escalates every question while `/chat` keeps returning `200` with normal latency and zero errors. A fail-closed judge produces the *same* gate reason as a genuine low score, so that counter is the only thing in the system that can tell "the provider is down" from "retrieval is bad" — and those need opposite responses.
 - ✅ **Alerts with structural thresholds** — seven rules, validated by `promtool`. Most are derived from something the system guarantees (a healthy judge never fails; `max_connections` is 100; a target is up or it is not) rather than from a traffic baseline that does not exist yet.
+- ✅ **PII guardrails in both scripts** — emails, phone numbers, national IDs and Luhn-checked card numbers, in Western *and* Arabic-Indic digits, redacted from answers, dropped from anything long-term memory would persist, and scrubbed before anything is sent to Langfuse. Over-redaction is the failure that gets a guardrail switched off, so every pattern requires a phone or ID shape rather than a run of digits — `135` credit hours, a `2.0` GPA and `مادة (٢٤)` are left alone, and the test suite asserts that using strings from the real corpus. Streaming needed its own redactor: redacting chunk by chunk emits half a phone number in the clear, because neither half matches alone.
+- ✅ **Query drift and token cost** — cosine against the evaluation set's centroid on every question (free: the query vector already exists), and provider-reported token usage with the price as an editable Grafana constant.
+- ✅ **Offline evaluation with RAGAS** — faithfulness, answer relevance, context precision and context recall over 62 bilingual questions, judged by a different provider than the one serving, so scoring a run cannot throttle the system being scored.
+- ✅ **One trace per question in Langfuse** — trace id *is* the `thread_id`, so a trace and its log lines join without guessing from timestamps. Tracing is optional and fails silently: with the keys unset every call is a no-op.
+- ✅ **A genuinely streaming endpoint** — BentoML, tokens as the model produces them. Ungated by necessity and it says so in its own payload, because the post-generation judges need a complete answer to score.
 
 ---
 
@@ -171,16 +237,23 @@ Chunks are embedded into pgvector with metadata that retrieval depends on:
 
 ## Running it
 
-### Docker (one command)
+### Docker — three commands
 
 ```bash
-git clone <repo-url> && cd Customer_Support
-
+git clone https://github.com/OmarAmir2001/Customer_Support.git && cd Customer_Support
 cp .env.example .env
-# Fill in GROQ_API_KEY and COHERE_API_KEY, plus POSTGRES_* credentials
-
-make up          # or: make rebuild to build first
+make up
 ```
+
+**Between the second and third command you must edit two lines of `.env`:**
+`GROQ_API_KEY` (generation — free tier is enough) and `COHERE_API_KEY` (embeddings
+and the judges). Everything else in `.env.example` has a working default, including
+the Postgres credentials, so those two keys are the whole of the manual step. Without
+them the app boots and then fails on its first model call, which is the right
+direction to fail but not an obvious one — hence saying it here rather than letting
+you find out.
+
+Use `make rebuild` instead of `make up` to build the image first.
 
 That starts Postgres with pgvector, waits for it to accept connections, applies migrations, and brings up the API behind nginx. `POSTGRES_HOST` is overridden to the `pgvector` service name inside the network, so the same `.env` works on the host and in the container. `make help` lists the rest — `make check` validates the compose file without starting anything, `make monitoring` prints where the dashboards are, and `make targets` shows which scrape targets Prometheus currently has up.
 
@@ -193,7 +266,7 @@ That starts Postgres with pgvector, waits for it to accept connections, applies 
 
 ### What is monitored
 
-Two of the exported metrics are specific to this system, and they exist because its
+Four of the exported metrics are specific to this system, and they exist because its
 worst failure is invisible in HTTP terms. The judges **fail closed**: if the model
 provider degrades, every question escalates while `/chat` returns `200` with normal
 latency and no errors. A request-rate panel would look perfect throughout.
@@ -202,8 +275,33 @@ latency and no errors. A request-rate panel would look perfect throughout.
 |---|---|
 | `customer_support_questions_total{outcome,failed_gate,department}` | escalation rate, and which gate caused it |
 | `customer_support_judge_failures_total{gate}` | **is the provider degrading?** — the leading indicator |
+| `customer_support_query_drift_cosine` | **are students asking about things the handbook does not cover?** |
+| `customer_support_tokens_total{model,kind}` | what the system costs, by model and direction |
 | `customer_support_requests_total{method,endpoint,status_code}` | traffic and errors, labelled by route template |
 | `customer_support_request_latency_seconds{method,endpoint}` | latency, including the checkpointer-bound conversation read |
+
+**Drift and escalations are read together**, and that pairing is the point. Drift is
+the cosine between each question's embedding and the centroid of the 62 evaluation
+questions — the same set the gate thresholds and the chunking sweep were tuned
+against, so distance from it means distance from the conditions under which every
+quality number in this README was measured. Escalations rising *with drift falling* is
+a **corpus** problem: write more handbook, or promote more ticket answers. Escalations
+rising with drift flat is a **provider** problem. Without the second signal those two
+look identical, and they need opposite responses.
+
+The warning line on the drift panel is **0.33**, which is the 5th percentile of the
+eval questions' own similarity to their centroid (`data/eval/drift_baseline.json`) —
+the spread of known-good questions, rather than a round number chosen by eye.
+Measuring costs nothing: retrieval has already embedded the query in order to search
+with it, so this is one dot product over a vector that exists either way.
+
+Token counts come from the **providers' own usage fields**, not from a character
+estimate — Arabic and English tokenise very differently in these models, so an
+estimate would be wrong by a language-dependent factor. Prices are Grafana dashboard
+constants (`price_in`, `price_out`, at the top of the dashboard) rather than numbers
+baked into PromQL, so a rate-card change is an edit and not a deploy. Streamed
+responses are not counted: usage requires `stream_options`, and risking the stream for
+a cost panel is the wrong trade.
 
 The judge-failure counter is the important one. A fail-closed judge returns the same
 gate reason as a judge that genuinely scored an answer low, so by the time the
@@ -384,6 +482,32 @@ fail the experiment instead of producing a misleading successful run. Resume reu
 valid scores and evaluates only missing metrics; fully collected reports also skip
 re-indexing.
 
+### The drift baseline
+
+```bash
+uv run --extra dev python scripts/build_drift_baseline.py --dry-run   # free
+uv run --extra dev python scripts/build_drift_baseline.py             # 62 embedding calls
+```
+
+`data/eval/drift_baseline.json` is committed, so drift works on a fresh clone without
+spending anything. Rebuild it when `EMBEDDING_MODEL_ID` or `EMBEDDING_MODEL_SIZE`
+changes — a baseline from a different model is not comparable, and the app logs
+`drift_not_comparable` and disables the metric rather than reporting a dimension
+mismatch as a change in student behaviour. The script prints the eval questions' own
+similarity spread; its 5th percentile is the warning line for the Grafana panel.
+
+### What is in `reports/`
+
+| File | What it is |
+|---|---|
+| `ragas_latest.json` | the most recent RAGAS run: per-question scores for all four metrics, both languages |
+| `mlflow_comparison.png` | the chunking sweep as MLflow renders it |
+| `experiments/<session>/` | one directory per sweep; `summary.json` maps configurations to MLflow run ids |
+
+Per-run artefacts are gitignored — they are large, numerous and reproducible from the
+scripts above. `ragas_latest.json` is the one kept under version control, so a
+reviewer can read real scores without running anything.
+
 `--register` considers only complete runs from the current comparison. Faithfulness
 must reach 0.75; scores within `--tie-margin` (default 0.05) are treated as tied and
 less retrieved context wins. This is a conservative tie policy, not a measured noise
@@ -396,8 +520,10 @@ and its `production` alias and legacy Production stage are verified to agree.
 
 | Method | Path                                             | Purpose                                            |
 | ------ | ------------------------------------------------ | -------------------------------------------------- |
-| `GET`  | `/`                                              | Health — app name and version                      |
-| `POST` | `/api/v1/chat`                                   | Ask a question. Returns an answer, or an escalation with `ticket_id` |
+| `GET`  | `/`                                              | Liveness — app name and version. What the container healthcheck probes |
+| `GET`  | `/health`                                        | Readiness — `{status, documents_indexed}`. `degraded` if the collection cannot be counted |
+| `POST` | `/api/v1/chat`                                   | Ask a question. Returns `{answer, sources[], escalated, ticket_id}` |
+| `POST` | `/ask`                                           | The same handler as `/api/v1/chat`, on the name the rubric uses. Not the BentoML `/ask` — see below |
 | `GET`  | `/api/v1/chat/{thread_id}`                       | Read a conversation, including an advisor's answer  |
 | `GET`  | `/api/v1/escalation/tickets`                     | Advisor queue. Filter by `ticket_status`, `department`, `promotion_held`; paginated |
 | `GET`  | `/api/v1/escalation/tickets/{id}`                | Full ticket: gate scores and the excerpts the bot saw |
@@ -414,6 +540,10 @@ and its `production` alias and legacy Production stage are verified to agree.
 | `POST` | `/api/v1/admin/knowledge_base/search/{project_id}` | Debug retrieval exactly as the agent sees it      |
 | `GET`  | `/api/v1/admin/index_info/info/{project_id}`     | Collection stats                                    |
 
+`sources[]` carries **citations, not chunk ids** — `CS_2023 — مادة (٢٤)`, the section a student can open and check. A promoted ticket answer cites its ticket instead. A chunk that cannot name its origin is omitted rather than given a placeholder, and the list is empty on an escalation, where the `answer` field holds the holding message rather than an answer.
+
+There are **two endpoints called `/ask`** and they are not the same thing. This one, on the FastAPI app, is the gated path: three judge gates, escalation, the full contract above. The other is on the BentoML service (`:3001`) and **streams** — tokens appear as the model produces them, which cannot be gated, because faithfulness and answer relevance can only be scored on a complete answer. That service says so in its own payload. PII redaction runs on both.
+
 `/api/v1/profile/{student_id}` returns what long-term memory knows about a student, and `DELETE` on it wipes that profile (privacy and reset requests). Conversation history is read per thread from `GET /api/v1/chat/{thread_id}`, keyed by `thread_id` exactly as the checkpointer stores it.
 
 Every transition the state machine permits is now reachable over HTTP, `duplicate` excepted — nothing should be able to park a ticket in a terminal state by hand until duplicate detection exists to justify it. A lifecycle call answers `404` for a missing ticket, `409` for a move the ticket's state refuses *or* for losing a race to another advisor, and `400` for a broken invariant such as a reason-less rejection.
@@ -428,6 +558,11 @@ src/customer_support/
   helpers/
     config.py                # Settings — every threshold and model id
     logging_config.py        # structlog + correlation ids
+    citations.py             # chunk -> a citation a reader can check
+    pii.py                   # PII detection, redaction, and a streaming redactor
+    drift.py                 # cosine, centroid, and the baseline loader
+    tracing.py               # Langfuse: one trace per question, one span per node
+    locale.py                # language negotiation, including detection from the question
   graph/                     # thin nodes + edges + wiring, no logic
     nodes.py  edges.py  builder.py  dependencies.py
   controllers/               # all real logic lives here
@@ -449,7 +584,8 @@ src/customer_support/
   routers/                   # HTTP only: no queries, no prompts
     chat.py  escalation.py  admin.py  health.py  schemas/
   utils/
-    metrics.py               # Prometheus: route-template labels, escalation counters
+    metrics.py               # Prometheus: route-template labels, escalation, drift, tokens
+  bento_service.py           # BentoML: the streaming, ungated /ask
   stores/                    # external systems behind interfaces
     checkpointer.py          # LangGraph Postgres saver
     llm/                     # LLMInterface + OpenAI/Groq and Cohere providers
@@ -459,6 +595,13 @@ data/handbooks/              # CS_2023.md, IS_2023.md — DVC-tracked raw input
 data/corpus/                 # derived corpus + manifest — a DVC stage output
 dvc.yaml  params.yaml        # the reproducible pipeline and its parameters
 scripts/build_corpus.py      # raw handbooks -> validated, citable corpus
+scripts/index_corpus.py      # corpus -> pgvector, idempotent
+scripts/build_drift_baseline.py  # eval questions -> the drift reference centroid
+scripts/run_ragas.py         # offline scoring
+scripts/run_experiment.py    # the chunking sweep, logged to MLflow
+data/eval/questions.json     # 62 bilingual questions with ground truth
+data/eval/drift_baseline.json    # the committed drift centroid (384 dims)
+reports/                     # RAGAS scores, the MLflow comparison, sweep outputs
 handbook/                    # the original scanned PDFs, archival source of truth
 docker/                      # Dockerfile, compose file, entrypoint, monitoring config
   Dockerfile                 # built with the REPO ROOT as context
@@ -490,6 +633,7 @@ Makefile                     # wraps the compose flags so they cannot be forgott
 | `RETRIEVAL_OVERFETCH_FACTOR`       | `3`     | Fetch `top_k × this`, because filtering discards rows                   |
 | `JUDGE_MAX_OUTPUT_TOKENS`          | `1200`  | Reasoning models spend tokens before emitting JSON; too low truncates the verdict and the whole judgement is rejected |
 | `INPUT_DEFAULT_MAX_CHARACTERS`     | `8000` in `.env.example` (unset = no truncation) | `generate_text` truncates its prompt to this — set it below the context size and the excerpts get cut out of the answer prompt |
+| `PII_REDACTION_ENABLED`            | `true`  | Guardrails on answers, on what long-term memory persists, and on what reaches Langfuse. `false` is for reproducing a report of over-redaction, not for production |
 | `LOG_JSON`                         | `true`  | `false` for coloured local logs                                        |
 | `--workers` (Dockerfile `CMD`)     | `4`     | Each worker is a separate process with its own connection pool, thread pool and metrics. Changing it changes the connection budget below |
 | `PROMETHEUS_MULTIPROC_DIR`         | set in the image | Without it each worker reports only its own counters, so a scrape shows roughly 1/N of real traffic |
@@ -512,7 +656,12 @@ only under the load that needs the connections most.
 - Clean controller architecture — thin nodes, logic reused by both the graph and the API, testable without either
 - Production logging: one renderer for app and library logs, correlation ids through `contextvars`
 - Instrumentation that survives contact with production: bounded label cardinality, multiprocess-safe counters, errors recorded in a `finally` so failures cannot vanish from the error rate — and metrics chosen so the system's *own* failure mode is visible, not just HTTP's
-- FastAPI + Pydantic v2, SQLAlchemy 2 async, Alembic migrations, Docker Compose, uv
+- Offline evaluation that is separate from the request path: RAGAS over a labelled bilingual set, judged by a different provider than the one serving, so scoring cannot throttle what it scores
+- Data and experiment versioning: DVC for the corpus with a content hash as the data version, MLflow for runs and a registry where "the model" is the retrieval configuration
+- Guardrails written for the data that actually arrives — PII in Arabic-Indic as well as Western digits, and a streaming redactor, because redacting chunk by chunk leaks half a phone number
+- Drift measured where it is free, and paired with a second signal so it can distinguish a corpus problem from a provider problem
+- Cost instrumentation from provider-reported usage, with the price editable in the dashboard rather than compiled into a query
+- FastAPI + Pydantic v2, SQLAlchemy 2 async, Alembic migrations, Docker Compose, BentoML, uv
 
 ---
 
@@ -534,6 +683,26 @@ Generalising means moving those to `Settings`, putting the domain nouns behind p
 Renaming `student_id` is the one item that gets more expensive with time, because it is part of the public request body — the cost lands the moment any client hardcodes it. Renaming the `instructor_resolved` metadata tag is *not* expensive: pgvector is a rebuildable projection, so it is a re-push.
 
 ---
+
+## Session changelog
+
+What landed when, from the git history. Dates are the sessions I actually worked in,
+not a release schedule.
+
+| Session | What landed |
+|---|---|
+| **Jul 30 – Aug 7** | Foundations: FastAPI skeleton, the `LLMInterface` + provider factory (OpenAI-compatible and Cohere), the `VectorDBInterface` with a Qdrant provider, the KB controller, chunking and ingestion, JSON corpus support |
+| **Sep 15 – 18** | Postgres as the source of truth: models, enums, routers, Alembic, and a `PgVectorProvider` so the vector index became a rebuildable projection of Postgres rather than a second store |
+| **Sep 21 – 22** | The agent itself: the LangGraph state machine, escalation, the ticket lifecycle, long-term student memory, language negotiation, and prompt templates split per locale |
+| **Sep 23 – 25** | Production shape: Docker and the entrypoint, the promotion judges, the full set of lifecycle endpoints, Prometheus metrics with route-template labels, CI on GitHub Actions, and `tests/conftest.py` — which turns a test that silently reads your `.env` into an immediate failure |
+| **Sep 29 – Oct 1** | Reproducibility: `build_corpus.py` with eight validation rules, the DVC pipeline, the 62-question bilingual evaluation set, the RAGAS harness, the chunking experiment runner, and `Retry-After`-aware rate-limit handling |
+| **Oct 3 – 4** | MLflow tracking and the model registry, where "the model" is the retrieval configuration; the sweep that selects one |
+| **Oct 8 – 9** | Hardened both providers (Cohere's `generate_text` had been passing a dict where v1 chat wants a string — a bare 422), made language a *detected* signal, moved the RAGAS judge to Cohere so evaluation load cannot throttle serving, added the BentoML streaming service, and Langfuse tracing keyed on `thread_id` |
+| **Oct 9** | `sources[]` as real citations, `/health` with `documents_indexed`, the `/ask` alias; PII guardrails across answers, profiles and traces; query drift and token cost with the panels to read them; these diagrams |
+
+The commits are deliberately verbose — each one states what changed and *why that
+way*, including the failures that shaped it. `git log` is the long version of this
+table.
 
 ## License
 
