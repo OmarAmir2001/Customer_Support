@@ -143,6 +143,51 @@ jobs:
             --entrypoint promtool prom/prometheus:v3.13.3 \
             check config /etc/prometheus/prometheus.yml
 
+      - name: Every dashboard panel queries a metric that exists
+        # A panel is the one artefact that fails SILENTLY: rename a metric in the
+        # code and the graph just goes empty, with no error anywhere. So the metric
+        # names in the dashboards are checked against the names the app defines.
+        #
+        # Also parses each dashboard, because a dashboard with a JSON syntax error is
+        # skipped by Grafana's provisioner with only a log line to say so.
+        run: |
+          python - <<'PY'
+          import json, re, sys
+          from pathlib import Path
+
+          defined = set()
+          for source in Path("src").rglob("*.py"):
+              text = source.read_text(encoding="utf-8")
+              defined.update(re.findall(r'"(customer_support_[a-z_]+)"', text))
+          print(f"metrics defined in src/: {sorted(defined)}")
+
+          failed = False
+          for dashboard in sorted(Path("docker/grafana/dashboards").glob("*.json")):
+              try:
+                  spec = json.loads(dashboard.read_text(encoding="utf-8"))
+              except json.JSONDecodeError as exc:
+                  print(f"::error::{dashboard}: invalid JSON: {exc}")
+                  failed = True
+                  continue
+
+              for panel in spec.get("panels", []):
+                  for target in panel.get("targets", []):
+                      expr = target.get("expr", "")
+                      for used in re.findall(r"customer_support_[a-z_]+", expr):
+                          # Histograms are queried through their _bucket/_count/_sum
+                          # suffixes, which prometheus_client derives rather than
+                          # declares, so strip them before comparing.
+                          base = re.sub(r"_(bucket|count|sum|total)$", "", used)
+                          if used in defined or base in defined or f"{base}_total" in defined:
+                              continue
+                          print(f"::error::{dashboard.name} panel {panel.get('title')!r} "
+                                f"queries unknown metric {used!r}")
+                          failed = True
+              print(f"  ok  {dashboard.name}: {len(spec.get('panels', []))} panels")
+
+          sys.exit(1 if failed else 0)
+          PY
+
   image:
     name: Build and boot
     runs-on: ubuntu-latest
@@ -269,6 +314,35 @@ jobs:
             exit 1
           fi
           echo "metrics OK: labels are bounded"
+
+      - name: The API contract is what the README claims
+        # Three claims a README can make while the code does something else. Asserted
+        # against the running container, not against the test suite, because the tests
+        # mount the routers on a bare app and cannot see a wiring mistake in main.py.
+        run: |
+          HEALTH="$(curl -fsS localhost:8000/health)"
+          echo "GET /health -> $HEALTH"
+          echo "$HEALTH" | grep -q '"documents_indexed"' \
+            || { echo "::error::/health does not report documents_indexed"; exit 1; }
+          echo "$HEALTH" | grep -q '"status"' \
+            || { echo "::error::/health does not report status"; exit 1; }
+
+          # The alias must be REGISTERED, which is the part main.py can get wrong.
+          SPEC="$(curl -fsS localhost:8000/openapi.json)"
+          echo "$SPEC" | grep -q '"/ask"' \
+            || { echo "::error::/ask is not registered"; exit 1; }
+          echo "$SPEC" | grep -q '"/api/v1/chat"' \
+            || { echo "::error::/api/v1/chat is missing"; exit 1; }
+
+          # sources[] must be in the published schema, not only in the Python class.
+          echo "$SPEC" | python -c "
+          import json, sys
+          spec = json.load(sys.stdin)
+          fields = spec['components']['schemas']['ChatResponse']['properties']
+          assert 'sources' in fields, f'ChatResponse has no sources: {sorted(fields)}'
+          print('ChatResponse fields:', sorted(fields))
+          "
+          echo "contract OK: /health counts, /ask is registered, sources[] is published"
 
       - name: Container logs
         if: always()

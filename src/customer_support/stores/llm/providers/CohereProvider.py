@@ -1,6 +1,7 @@
 import cohere
 
 from customer_support.helpers.logging_config import get_logger
+from customer_support.utils.metrics import record_tokens
 
 from ..LLMEnum import CohereEnums, DocumentTypeEnum
 from ..LLMInterface import LLMInterface
@@ -66,6 +67,29 @@ class CohereProvider(LLMInterface):
             total_budget=self.rate_limit_total_budget,
         )
 
+    def _record_usage(self, response, model: str | None) -> None:
+        """Cohere reports usage under `meta`, not `usage`.
+
+        v1 carries both `meta.tokens` (what the model processed) and
+        `meta.billed_units` (what you pay for, which excludes cached input). Billed
+        units are preferred when present, because the panel this feeds is a COST
+        panel — reporting processed tokens there would overstate the bill.
+        """
+        try:
+            meta = getattr(response, "meta", None)
+            if meta is None:
+                return
+            units = getattr(meta, "billed_units", None) or getattr(meta, "tokens", None)
+            if units is None:
+                return
+            record_tokens(
+                model,
+                getattr(units, "input_tokens", None),
+                getattr(units, "output_tokens", None),
+            )
+        except Exception:  # pragma: no cover - instrumentation must never raise
+            pass
+
     def generate_text(
         self,
         prompt: str,
@@ -109,6 +133,7 @@ class CohereProvider(LLMInterface):
             ),
             operation="generate_text",
         )
+        self._record_usage(response, self.generation_model_id)
         if not response or not response.text:
             self.logger.error(
                 "generation_response_invalid",
@@ -156,6 +181,7 @@ class CohereProvider(LLMInterface):
             # The judge path, now the busiest caller: three gates per question.
             operation="generate_json",
         )
+        self._record_usage(response, self.generation_model_id)
         if not response or not response.text:
             self.logger.error(
                 "judge_response_invalid",
@@ -199,6 +225,7 @@ class CohereProvider(LLMInterface):
             # The call that 429'd mid-sweep on the trial key.
             operation="embed_text",
         )
+        self._record_usage(response, self.embedding_model_id)
         if not response or not response.embeddings or not response.embeddings.float:
             self.logger.error(
                 "embedding_response_invalid",

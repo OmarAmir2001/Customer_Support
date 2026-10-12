@@ -1,6 +1,7 @@
 from openai import OpenAI
 
 from customer_support.helpers.logging_config import get_logger
+from customer_support.utils.metrics import record_tokens
 
 from ..LLMEnum import OpenAIEnums
 from ..LLMInterface import LLMInterface
@@ -67,6 +68,30 @@ class OpenAIProvider(LLMInterface):
             total_budget=self.rate_limit_total_budget,
         )
 
+    def _record_usage(self, response, model: str | None) -> None:
+        """Report what the call cost, in tokens.
+
+        Reads the provider's own numbers rather than estimating from characters: an
+        estimate is wrong by a factor that varies with language, and Arabic
+        tokenises very differently from English in these models — the one place a
+        character-based guess would be most misleading here.
+
+        Wrapped in its own try/except because this is instrumentation on a path that
+        has already succeeded. A missing or renamed usage field must not turn a good
+        answer into an error.
+        """
+        try:
+            usage = getattr(response, "usage", None)
+            if usage is None:
+                return
+            record_tokens(
+                model,
+                getattr(usage, "prompt_tokens", None),
+                getattr(usage, "completion_tokens", None),
+            )
+        except Exception:  # pragma: no cover - instrumentation must never raise
+            pass
+
     def generate_text(
         self,
         prompt: str,
@@ -99,6 +124,7 @@ class OpenAIProvider(LLMInterface):
             ),
             operation="generate_text",
         )
+        self._record_usage(response, self.generation_model_id)
         if (
             not response
             or not response.choices
@@ -150,6 +176,11 @@ class OpenAIProvider(LLMInterface):
             operation="stream_text",
         )
 
+        # NOT counted in customer_support_tokens_total. A streamed response carries
+        # no usage unless `stream_options={"include_usage": True}` is requested, and
+        # a provider that rejects an unknown parameter would fail the stream rather
+        # than the counting — the wrong thing to risk for a cost panel. /chat is the
+        # path that carries real traffic and it is counted.
         for chunk in stream:
             # Reasoning models emit chunks with no choices, and the final chunk
             # carries only a finish_reason. Both are normal, not errors.
@@ -201,6 +232,7 @@ class OpenAIProvider(LLMInterface):
             # escalations under a 429.
             operation="generate_json",
         )
+        self._record_usage(response, self.generation_model_id)
         if not response or not response.choices or not response.choices[0].message:
             self.logger.error(
                 "judge_response_invalid",
@@ -234,6 +266,7 @@ class OpenAIProvider(LLMInterface):
             lambda: self.client.embeddings.create(model=self.embedding_model_id, input=text),
             operation="embed_text",
         )
+        self._record_usage(response, self.embedding_model_id)
         if (
             not response
             or not response.data

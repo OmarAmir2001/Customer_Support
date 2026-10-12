@@ -26,11 +26,28 @@ from contextvars import ContextVar
 from typing import Any
 
 from customer_support.helpers.logging_config import get_logger
+from customer_support.helpers.pii import redact
 
 logger = get_logger(__name__)
 
 _client: Any = None
 _enabled = False
+
+#: Whether to strip PII before anything leaves for the tracing backend.
+#:
+#: Langfuse is a SEPARATE SERVICE, and the question is the one field a student types
+#: freely — so this is the boundary where PII would leave the system entirely. Set
+#: from Settings at startup, defaulting to on, because a guardrail that depends on a
+#: later call to enable it is not one.
+_redact_pii = True
+
+
+def _scrub(value: Any) -> Any:
+    """Redact strings on their way to the tracing backend; pass anything else."""
+    if not _redact_pii or not isinstance(value, str):
+        return value
+    redacted, _found = redact(value)
+    return redacted
 
 
 #: The trace for the request currently being served.
@@ -56,7 +73,9 @@ def configure_tracing(settings) -> bool:
     Called from the lifespan rather than lazily per request: a misconfiguration
     should be visible in the boot logs, not discovered one request at a time.
     """
-    global _client, _enabled
+    global _client, _enabled, _redact_pii
+
+    _redact_pii = bool(getattr(settings, "PII_REDACTION_ENABLED", True))
 
     public_key = getattr(settings, "LANGFUSE_PUBLIC_KEY", None)
     secret_key = getattr(settings, "LANGFUSE_SECRET_KEY", None)
@@ -107,7 +126,7 @@ def start_trace(*, thread_id: str, question: str, student_id: str, **metadata) -
             # The thread_id, so a trace and its log lines share one identifier.
             id=thread_id,
             name="chat",
-            input={"question": question},
+            input={"question": _scrub(question)},
             user_id=student_id,
             session_id=thread_id,
             metadata=metadata or None,
@@ -171,7 +190,11 @@ def traced(name: str):
                     # would bury the gate scores that are the reason to look.
                     handle.update(
                         output={
-                            key: (f"<{len(value)} items>" if isinstance(value, list) else value)
+                            key: (
+                                f"<{len(value)} items>"
+                                if isinstance(value, list)
+                                else _scrub(value)
+                            )
                             for key, value in result.items()
                         }
                     )
@@ -218,7 +241,7 @@ def finish_trace(trace: Any, *, answer: str | None, escalated: bool, **metadata)
         return
     try:
         trace.update(
-            output={"answer": answer, "escalated": escalated},
+            output={"answer": _scrub(answer), "escalated": escalated},
             metadata=metadata or None,
         )
     except Exception as exc:

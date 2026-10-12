@@ -24,6 +24,9 @@ have to read this docstring to find out.
 
 Retrieval and the context-relevance gate DO still run: gate 1 is pre-generation, so
 an unanswerable question is refused before a single token is streamed.
+
+PII redaction also runs, and it is the one guardrail that survives streaming — see
+`helpers.pii.StreamRedactor` for why it cannot be done chunk by chunk.
 """
 
 from __future__ import annotations
@@ -35,6 +38,10 @@ from typing import Annotated, Any
 
 import bentoml
 from pydantic import Field
+
+from customer_support.helpers.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 # Fields are declared directly on the endpoint rather than as one Pydantic model.
 #
@@ -188,15 +195,35 @@ class HandbookAssistant:
             yield self._refusal()
             return
 
+        # The guardrail that CAN be applied to a stream. The post-generation judges
+        # cannot — they need a finished answer — but redaction only needs enough
+        # lookahead to know a token is complete, which is a bounded buffer rather
+        # than the whole answer. Without this the streaming endpoint would be the
+        # one path in the system with no PII protection at all.
+        from customer_support.helpers.pii import StreamRedactor
+
+        redactor = StreamRedactor() if self._settings.PII_REDACTION_ENABLED else None
+
         for piece in self._generation.stream_answer(
             question=question, chunks=chunks, language=resolved
         ):
-            yield piece
+            out = redactor.feed(piece) if redactor is not None else piece
+            if out:
+                yield out
             # Hand control back between chunks. stream_answer is a sync generator
             # driven from async code; without this the event loop cannot flush what
             # has been yielded, and the "stream" arrives as one block at the end —
             # which would make this endpoint pointless.
             await asyncio.sleep(0)
+
+        if redactor is not None:
+            # The held-back tail. Skipping this truncates every answer by up to the
+            # holdback length, which is the obvious way to get this wrong.
+            tail = redactor.flush()
+            if tail:
+                yield tail
+            if redactor.found:
+                logger.warning("pii_redacted", where="bento_stream", kinds=dict(redactor.found))
 
     def _refusal(self) -> str:
         """The same words /chat uses when it escalates.
