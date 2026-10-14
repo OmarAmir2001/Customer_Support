@@ -59,6 +59,16 @@ db:  ## a psql prompt on the database
 migrate:  ## apply migrations on the HOST (the container does this on boot too)
 	uv run alembic upgrade head
 
+up-ui:  ## start the stack INCLUDING the Gradio console in Docker
+	$(COMPOSE) --profile ui up -d --build
+
+ui:  ## start the Gradio operator console on the host (needs the API up)
+	@echo "Gradio console -> http://127.0.0.1:7860   (API: $${UI_API_BASE_URL:-http://127.0.0.1:8000})"
+	uv run --extra ui python app/gradio/main.py
+
+stream:  ## start the BentoML streaming service the UI's streaming tab needs
+	uv run --extra dev bentoml serve customer_support.bento_service:HandbookAssistant --port 3001
+
 test:  ## run the test suite
 	uv run --extra dev pytest tests -q --no-cov
 
