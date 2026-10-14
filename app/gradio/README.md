@@ -22,6 +22,7 @@ Opens on <http://127.0.0.1:7860>.
 | **Ask** | The student's view, with **verified** and **streaming** side by side — the project's central trade-off in one radio button. Renders `sources[]` as citation chips and the escalation banner with its ticket id |
 | **Conversation** | A thread by id, including an advisor's reply. Demonstrates that delivery is **passive** — nothing is pushed when a ticket resolves |
 | **Advisor queue** | The escalation lifecycle: filters, which gate tripped, the excerpts the bot actually saw, gate scores, and every lifecycle move. Resolving and promoting are separate buttons, because they are separate decisions |
+| **Knowledge base** | Upload → chunk → embed and index, plus a debug search that uses the *same* `RetrievalController` the graph does, so it shows exactly what the agent would see. Says plainly that the offline DVC path is the one to use for anything you will measure |
 | **System** | `documents_indexed`, the long-term profile, and links to Grafana, Prometheus, Langfuse and MLflow |
 
 ## Design decisions
@@ -54,6 +55,13 @@ knows HTTP exists, and it translates every failure into something actionable: 40
 means a missing ticket, 409 means either an illegal transition *or* that another
 advisor got there first, and a connection error names the command that starts the
 stack. A UI that renders `httpx.ConnectError` teaches the viewer nothing.
+
+**Destructive actions are double-gated.** A push with `do_reset` rebuilds the whole
+collection, which deletes every promoted ticket answer in it — the accumulated output
+of the learning loop. The checkbox states the intent and a typed `RESET` proves it was
+not a misclick. The per-section sync is idempotent anyway, so a re-push after a
+re-chunk needs no reset at all; the option exists because the API has it, not because
+you should reach for it.
 
 ## Configuration
 

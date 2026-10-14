@@ -275,11 +275,12 @@ make up-ui       # or in Docker, as an optional compose profile
 make stream      # the BentoML service the streaming tab needs (optional)
 ```
 
-Four tabs: **Ask** (verified and streaming side by side, so the trade-off is visible
+Five tabs: **Ask** (verified and streaming side by side, so the trade-off is visible
 rather than described), **Conversation** (a thread by id, including an advisor's reply
 — delivery is passive), **Advisor queue** (the full lifecycle, with the gate scores
-and the excerpts the bot actually saw), and **System** (`documents_indexed`, the
-long-term profile, dashboard links).
+and the excerpts the bot actually saw), **Knowledge base** (upload, chunk, embed and
+index, plus a debug search through the agent's own retrieval path), and **System**
+(`documents_indexed`, the long-term profile, dashboard links).
 
 It imports nothing from `customer_support` and holds no business logic — every
 decision it renders was made by the API — so it can point at a remote deployment by

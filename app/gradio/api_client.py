@@ -20,6 +20,7 @@ into "request failed".
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -245,6 +246,67 @@ class ApiClient:
             "POST",
             f"/api/v1/escalation/tickets/{ticket_id}/promotion-assessment",
             json={"advisor_answer": advisor_answer},
+        )
+
+    # ------------------------------------------------------ knowledge base
+
+    def ingest(self, project_id: int, file_path: str) -> dict:
+        """Upload one file. Returns `{file_id, asset_id, asset_name}`.
+
+        `file_id` is the asset's primary key and is exactly what /process accepts —
+        the endpoint returns both it and `asset_name` so a caller never has to guess
+        which of the two it was handed.
+        """
+        path = Path(file_path)
+        with path.open("rb") as handle:
+            return self._request(
+                "POST",
+                f"/api/v1/admin/ingest/{project_id}",
+                files={"file": (path.name, handle, "application/octet-stream")},
+            )
+
+    def process(
+        self,
+        project_id: int,
+        file_id: str | None,
+        chunk_size: int,
+        overlap: int,
+        do_reset: bool,
+    ) -> dict:
+        """Chunk uploaded files into Postgres. `file_id` None means every file."""
+        return self._request(
+            "POST",
+            f"/api/v1/admin/process/{project_id}",
+            json={
+                "file_id": file_id or None,
+                "chunk_size": int(chunk_size),
+                "overlap": int(overlap),
+                "do_reset": bool(do_reset),
+            },
+        )
+
+    def push(self, project_id: int, do_reset: bool) -> dict:
+        """Embed and index into pgvector. COSTS MONEY.
+
+        `do_reset` is sent as the int the endpoint's schema declares, not a bool.
+        """
+        return self._request(
+            "POST",
+            f"/api/v1/admin/knowledge_base/push/{project_id}",
+            json={"do_reset": 1 if do_reset else 0},
+        )
+
+    def index_info(self, project_id: int) -> dict:
+        return self._request("GET", f"/api/v1/admin/index_info/info/{project_id}")
+
+    def kb_search(
+        self, project_id: int, query: str, limit: int = 10, department: str | None = None
+    ) -> dict:
+        """Retrieval exactly as the agent sees it — same controller, same ranking."""
+        return self._request(
+            "POST",
+            f"/api/v1/admin/knowledge_base/search/{project_id}",
+            json={"query": query, "limit": int(limit), "department": department or None},
         )
 
     # ------------------------------------------------------- profile & health

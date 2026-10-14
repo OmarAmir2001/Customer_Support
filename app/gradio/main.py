@@ -34,7 +34,7 @@ import gradio as gr  # noqa: E402
 from api_client import ApiClient  # noqa: E402
 from settings import settings  # noqa: E402
 from theme import CSS, THEME  # noqa: E402
-from views import advisor, ask, conversation, system  # noqa: E402
+from views import advisor, ask, conversation, knowledge, system  # noqa: E402
 
 HEADER = """
 # 🎧 Handbook Assistant
@@ -71,6 +71,8 @@ def build_app() -> gr.Blocks:
                 conversation.build(client)
             with gr.Tab("Advisor queue"):
                 advisor.build(client)
+            with gr.Tab("Knowledge base"):
+                knowledge.build(client)
             with gr.Tab("System"):
                 system.build(client)
 
