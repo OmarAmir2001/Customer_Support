@@ -264,6 +264,28 @@ That starts Postgres with pgvector, waits for it to accept connections, applies 
 | Grafana | <http://127.0.0.1:3000> | datasource and dashboard provisioned at boot |
 | Prometheus | <http://127.0.0.1:9090> | `make targets` lists what it is scraping |
 
+### The operator console
+
+A Gradio UI for driving and demonstrating the system without curl. It is **not the
+product front end** — the student-facing interface is separate design work.
+
+```bash
+make ui          # on the host, needs the API up   -> http://127.0.0.1:7860
+make up-ui       # or in Docker, as an optional compose profile
+make stream      # the BentoML service the streaming tab needs (optional)
+```
+
+Four tabs: **Ask** (verified and streaming side by side, so the trade-off is visible
+rather than described), **Conversation** (a thread by id, including an advisor's reply
+— delivery is passive), **Advisor queue** (the full lifecycle, with the gate scores
+and the excerpts the bot actually saw), and **System** (`documents_indexed`, the
+long-term profile, dashboard links).
+
+It imports nothing from `customer_support` and holds no business logic — every
+decision it renders was made by the API — so it can point at a remote deployment by
+changing one environment variable, and breaking it cannot break the assistant. There
+is no authentication; see [app/gradio/README.md](app/gradio/README.md).
+
 ### What is monitored
 
 Four of the exported metrics are specific to this system, and they exist because its
@@ -594,6 +616,10 @@ migrations/                  # Alembic (ignores LangGraph's own checkpoint table
 data/handbooks/              # CS_2023.md, IS_2023.md — DVC-tracked raw input
 data/corpus/                 # derived corpus + manifest — a DVC stage output
 dvc.yaml  params.yaml        # the reproducible pipeline and its parameters
+app/gradio/                  # the operator console: a separate deployable, HTTP only
+  main.py                    # entry point; no __init__.py here on purpose (name clash)
+  api_client.py              # the only module that knows the API exists
+  views/                     # one module per tab
 scripts/build_corpus.py      # raw handbooks -> validated, citable corpus
 scripts/index_corpus.py      # corpus -> pgvector, idempotent
 scripts/build_drift_baseline.py  # eval questions -> the drift reference centroid

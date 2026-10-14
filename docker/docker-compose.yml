@@ -108,6 +108,56 @@ services:
       - backend
     restart: unless-stopped
 
+  # The Gradio operator console. OPTIONAL, behind a compose profile, so the default
+  # `make up` does not build a second image on an already ten-container stack.
+  #
+  #   make up-ui      # the stack plus this
+  #   make ui         # or run it on the host, no image needed
+  #
+  # Its own image installs only the `ui` extra — no asyncpg, no provider SDKs, no
+  # langgraph — which is what the UI importing nothing from customer_support buys.
+  gradio:
+    profiles: ["ui"]
+    build:
+      # The REPO ROOT, like the API image: the Dockerfile reads pyproject.toml to
+      # resolve the extra, and that lives at the root.
+      context: ..
+      dockerfile: app/gradio/Dockerfile
+    container_name: customer_support_gradio
+    # measured ~180M. Gradio ships a front end and keeps per-session state.
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+        reservations:
+          memory: 128m
+    ports:
+      # Loopback, like everything that is not nginx.
+      - "127.0.0.1:7860:7860"
+    environment:
+      # Service names, not localhost: inside the compose network the API answers to
+      # `fastapi`. Not read from .env — these are topology, not configuration, and
+      # a .env written for host-side use has the wrong values here.
+      UI_API_BASE_URL: http://fastapi:8000
+      # The BentoML service is not in this compose file (it is run by hand), so this
+      # points at the host. The streaming tab degrades with a message naming the
+      # command to start it, which is the honest behaviour for an optional path.
+      UI_STREAM_BASE_URL: http://host.docker.internal:3001
+      UI_GRAFANA_URL: http://127.0.0.1:3000
+      UI_PROMETHEUS_URL: http://127.0.0.1:9090
+      UI_LANGFUSE_URL: http://127.0.0.1:3002
+      UI_MLFLOW_URL: http://127.0.0.1:5000
+    extra_hosts:
+      # So UI_STREAM_BASE_URL above resolves on Linux too, where
+      # host.docker.internal is not provided by default.
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      fastapi:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: unless-stopped
+
   # PostgreSql (pgvector)
   pgvector:
     image: pgvector/pgvector:0.8.6-pg18
