@@ -138,3 +138,56 @@ def test_boolean_scores_are_named_so_they_are_not_sent_as_floats():
     # RAGAS metrics must NOT be in here — they are genuinely continuous.
     for metric in ("faithfulness", "answer_relevancy", "context_precision", "context_recall"):
         assert metric not in BOOLEAN_SCORES
+
+
+# ------------------------------------------------------------ dataset linking
+
+
+def test_no_dataset_name_means_no_linking_and_no_error():
+    """The dataset is optional: tracing alone makes one run browsable."""
+    tracer = EvalTracer(_settings(), run_name="r", dataset_name=None)
+    assert tracer._items == {}
+    tracer.start_question(ROW)
+
+
+def test_a_missing_dataset_does_not_stop_the_run():
+    """An eval must not refuse to run because nobody uploaded a dataset yet.
+
+    The dataset is what makes two runs comparable; its absence costs grouping, not
+    the run — which has already spent real money on model calls by this point.
+    """
+
+    class _Client:
+        def get_dataset(self, _name):
+            raise RuntimeError("404 dataset not found")
+
+    tracer = EvalTracer(_settings(), run_name="r", dataset_name="nope")
+    tracer._client = _Client()
+    tracer._load_dataset()
+    assert tracer._items == {}
+
+
+def test_items_are_keyed_on_question_id_from_metadata():
+    """The link is made on OUR question id, not Langfuse's item id.
+
+    Item ids are namespaced (`handbook-eval-q001`) because Langfuse requires them to
+    be globally unique, so matching on them directly would couple the harness to the
+    prefix. `metadata.question_id` is the stable join key.
+    """
+
+    class _Item:
+        def __init__(self, qid):
+            self.metadata = {"question_id": qid}
+
+    class _Dataset:
+        items = [_Item("q001"), _Item("q002"), _Item(None)]
+
+    class _Client:
+        def get_dataset(self, _name):
+            return _Dataset()
+
+    tracer = EvalTracer(_settings(), run_name="r", dataset_name="handbook-eval")
+    tracer._client = _Client()
+    tracer._load_dataset()
+
+    assert set(tracer._items) == {"q001", "q002"}, "an item with no question_id must be skipped"

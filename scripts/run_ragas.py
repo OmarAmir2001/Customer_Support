@@ -808,7 +808,14 @@ async def main_async(args) -> int:
     from customer_support.helpers.eval_tracing import EvalTracer
 
     run_name = f"{mode}-{data_version[:12]}-{stamp}"
-    tracer = EvalTracer(settings, run_name=run_name, metadata=provenance)
+    tracer = EvalTracer(
+        settings,
+        run_name=run_name,
+        metadata=provenance,
+        # Linking to this dataset is what makes runs comparable item by item. Absent
+        # or not uploaded yet, tracing still works and only grouping is lost.
+        dataset_name=args.dataset,
+    )
     if tracer.enabled:
         print(f"\nLangfuse: tracing this run as session {run_name!r}")
     else:
@@ -972,6 +979,14 @@ def spend_report(settings) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--questions", type=Path, default=DEFAULT_QUESTIONS)
+    parser.add_argument(
+        "--dataset",
+        default="handbook-eval",
+        help=(
+            "Langfuse dataset to attach this run to, so runs compare item by item. "
+            "Upload it with scripts/upload_eval_dataset.py. Pass '' to skip."
+        ),
+    )
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--reports", type=Path, default=DEFAULT_REPORTS)
     parser.add_argument(

@@ -64,11 +64,21 @@ class EvalTracer:
     anyone who has not stood Langfuse up — exactly like the request-path tracer.
     """
 
-    def __init__(self, settings, *, run_name: str, metadata: dict | None = None) -> None:
+    def __init__(
+        self,
+        settings,
+        *,
+        run_name: str,
+        metadata: dict | None = None,
+        dataset_name: str | None = None,
+    ) -> None:
         self._client = None
         self._traces: dict[str, Any] = {}
+        #: question id -> Langfuse dataset item, when a dataset is configured.
+        self._items: dict[str, Any] = {}
         self.run_name = run_name
         self.metadata = metadata or {}
+        self.dataset_name = dataset_name
 
         public_key = getattr(settings, "LANGFUSE_PUBLIC_KEY", None)
         secret_key = getattr(settings, "LANGFUSE_SECRET_KEY", None)
@@ -88,6 +98,28 @@ class EvalTracer:
         except Exception as exc:
             logger.warning("eval_tracing_unavailable", error=str(exc))
             self._client = None
+            return
+
+        self._load_dataset()
+
+    def _load_dataset(self) -> None:
+        """Map question id -> dataset item, so each trace can join the dataset run.
+
+        Optional and non-fatal. Tracing alone makes ONE run browsable; the dataset is
+        what makes two runs comparable, and an eval must not refuse to run because
+        nobody has uploaded one yet (scripts/upload_eval_dataset.py does that).
+        """
+        if not self.dataset_name:
+            return
+        try:
+            dataset = self._client.get_dataset(self.dataset_name)
+            for item in dataset.items:
+                question_id = (item.metadata or {}).get("question_id")
+                if question_id:
+                    self._items[question_id] = item
+            logger.info("eval_dataset_loaded", dataset=self.dataset_name, items=len(self._items))
+        except Exception as exc:
+            logger.warning("eval_dataset_unavailable", dataset=self.dataset_name, error=str(exc))
 
     @property
     def enabled(self) -> bool:
@@ -129,6 +161,18 @@ class EvalTracer:
             self._traces[row["id"]] = trace
         except Exception as exc:
             logger.warning("eval_trace_start_failed", question_id=row.get("id"), error=str(exc))
+            return
+
+        # Joining the trace to its dataset item is what creates a "dataset run item",
+        # and that is the whole mechanism behind run-over-run comparison: Langfuse can
+        # only line up two runs if both point at the same item.
+        item = self._items.get(row.get("id"))
+        if item is None:
+            return
+        try:
+            item.link(trace, self.run_name, run_metadata=self.metadata)
+        except Exception as exc:
+            logger.warning("eval_dataset_link_failed", question_id=row.get("id"), error=str(exc))
 
     def record_retrieval(self, row: dict) -> None:
         """A span for what retrieval returned, with provenance.
