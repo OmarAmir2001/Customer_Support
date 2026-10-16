@@ -184,15 +184,17 @@ class HandbookAssistant:
             limit=self._settings.RETRIEVAL_TOP_K,
         )
         if not chunks:
-            yield self._refusal()
+            yield self._refusal(resolved)
             return
 
         # Gate 1, pre-generation. The only gate that CAN run before streaming, and
         # the one that catches the dangerous case: a question the handbook does not
         # cover, which would otherwise be answered from the model's own knowledge.
-        gate = await self._grading.check_context_relevance(question=question, chunks=chunks)
+        gate = await self._grading.check_context_relevance(
+            question=question, chunks=chunks, language=resolved
+        )
         if not gate.passed:
-            yield self._refusal()
+            yield self._refusal(resolved)
             return
 
         # The guardrail that CAN be applied to a stream. The post-generation judges
@@ -225,13 +227,12 @@ class HandbookAssistant:
             if redactor.found:
                 logger.warning("pii_redacted", where="bento_stream", kinds=dict(redactor.found))
 
-    def _refusal(self) -> str:
-        """The same words /chat uses when it escalates.
+    def _refusal(self, language: str | None = None) -> str:
+        """The same words /chat uses when it escalates, in the same locale.
 
-        Read from ESCALATION_STUDENT_MESSAGE rather than written here, so a student
-        sees one consistent message whichever endpoint they reached. Note it is a
-        setting rather than a per-locale template, so it is currently English only —
-        a real gap for Arabic students, but one shared with /chat rather than
-        introduced here.
+        Read from the locale files so a student sees one consistent message in one
+        consistent language whichever endpoint they reached. This used to return
+        ESCALATION_STUDENT_MESSAGE, which was English-only.
         """
-        return self._settings.ESCALATION_STUDENT_MESSAGE
+        message = self._templates.get("rag", "escalation_message", {}, language=language)
+        return message or self._settings.ESCALATION_STUDENT_MESSAGE

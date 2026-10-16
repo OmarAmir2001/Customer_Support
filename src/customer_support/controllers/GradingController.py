@@ -23,9 +23,9 @@ from customer_support.stores.llm.templates import (
     CONTEXT_RELEVANCE_TEMPLATE,
     FAITHFULNESS_TEMPLATE,
     JUDGE_LANGUAGE,
-    JUDGE_SYSTEM_PROMPT,
     TemplateParser,
     format_excerpts,
+    judge_system_prompt,
 )
 from customer_support.utils.metrics import record_judge_failure
 
@@ -44,7 +44,7 @@ class GradingController(BaseController):
     # ------------------------------------------------------------------ gates
 
     async def check_context_relevance(
-        self, question: str, chunks: list[RetrievedDocument]
+        self, question: str, chunks: list[RetrievedDocument], language: str | None = None
     ) -> GateResult:
         """Gate 1, pre-generation. Cheapest check first: if the handbook does not
         cover the question, escalate without paying for a generation call."""
@@ -65,6 +65,7 @@ class GradingController(BaseController):
                 question=question, chunks=self._format_chunks(chunks)
             ),
             fallback_reason=GateFailureReason.NO_RELEVANT_CONTEXT,
+            language=language,
         )
         return self._apply_threshold(
             GateEnum.CONTEXT_RELEVANCE,
@@ -72,7 +73,9 @@ class GradingController(BaseController):
             self.app_settings.GATE_CONTEXT_RELEVANCE_THRESHOLD,
         )
 
-    async def check_faithfulness(self, answer: str, chunks: list[RetrievedDocument]) -> GateResult:
+    async def check_faithfulness(
+        self, answer: str, chunks: list[RetrievedDocument], language: str | None = None
+    ) -> GateResult:
         """Gate 2a, post-generation. Claim decomposition: score = supported / total."""
 
         verdict = await self._judge(
@@ -81,12 +84,15 @@ class GradingController(BaseController):
                 answer=answer, chunks=self._format_chunks(chunks)
             ),
             fallback_reason=GateFailureReason.NOT_GROUNDED,
+            language=language,
         )
         return self._apply_threshold(
             GateEnum.FAITHFULNESS, verdict, self.app_settings.GATE_FAITHFULNESS_THRESHOLD
         )
 
-    async def check_answer_relevance(self, question: str, answer: str) -> GateResult:
+    async def check_answer_relevance(
+        self, question: str, answer: str, language: str | None = None
+    ) -> GateResult:
         """Gate 2b, post-generation. Sees no chunks on purpose: a grounded answer to
         the wrong question must fail here, and faithfulness will never catch it."""
 
@@ -94,28 +100,37 @@ class GradingController(BaseController):
             gate=GateEnum.ANSWER_RELEVANCE,
             prompt=ANSWER_RELEVANCE_TEMPLATE.substitute(question=question, answer=answer),
             fallback_reason=GateFailureReason.OFF_TOPIC,
+            language=language,
         )
         return self._apply_threshold(
             GateEnum.ANSWER_RELEVANCE, verdict, self.app_settings.GATE_ANSWER_RELEVANCE_THRESHOLD
         )
 
     async def check_post_generation(
-        self, question: str, answer: str, chunks: list[RetrievedDocument]
+        self,
+        question: str,
+        answer: str,
+        chunks: list[RetrievedDocument],
+        language: str | None = None,
     ) -> list[GateResult]:
         """Both post-generation gates, concurrently: they are independent, so running
         them in sequence would double the latency for no benefit."""
 
         return list(
             await asyncio.gather(
-                self.check_faithfulness(answer=answer, chunks=chunks),
-                self.check_answer_relevance(question=question, answer=answer),
+                self.check_faithfulness(answer=answer, chunks=chunks, language=language),
+                self.check_answer_relevance(question=question, answer=answer, language=language),
             )
         )
 
     # -------------------------------------------------------------- internals
 
     async def _judge(
-        self, gate: GateEnum, prompt: str, fallback_reason: GateFailureReason
+        self,
+        gate: GateEnum,
+        prompt: str,
+        fallback_reason: GateFailureReason,
+        language: str | None = None,
     ) -> JudgeVerdict:
         """Run one judge with a single retry, then fail CLOSED.
 
@@ -131,7 +146,9 @@ class GradingController(BaseController):
                 raw = await asyncio.to_thread(
                     self.generation_client.generate_json,
                     prompt,
-                    JUDGE_SYSTEM_PROMPT,
+                    # The resolved locale, so the reason reaches the student in the
+                    # language they asked in. The rubric itself stays English.
+                    judge_system_prompt(language),
                     self.app_settings.JUDGE_MAX_OUTPUT_TOKENS,
                     self.app_settings.JUDGE_TEMPERATURE,
                 )

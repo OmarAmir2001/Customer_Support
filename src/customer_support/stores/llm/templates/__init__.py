@@ -20,6 +20,7 @@ from .judges import (
     CONTEXT_RELEVANCE_TEMPLATE,
     FAITHFULNESS_TEMPLATE,
     JUDGE_SYSTEM_PROMPT,
+    judge_system_prompt,
 )
 from .template_parser import FALLBACK_LANGUAGE, TemplateParser
 
@@ -30,6 +31,7 @@ __all__ = [
     "FALLBACK_LANGUAGE",
     "JUDGE_LANGUAGE",
     "JUDGE_SYSTEM_PROMPT",
+    "judge_system_prompt",
     "RAG_GROUP",
     "TemplateParser",
     "describe_source",

@@ -12,6 +12,7 @@ from customer_support.controllers.GenerationController import GenerationControll
 from customer_support.controllers.GradingController import GradingController
 from customer_support.controllers.RetrievalController import RetrievalController
 from customer_support.helpers.config import Settings
+from customer_support.stores.llm.templates import TemplateParser
 
 
 @dataclass(frozen=True)
@@ -21,3 +22,8 @@ class GraphDeps:
     generation: GenerationController
     escalation: EscalationController
     settings: Settings
+    # The escalation holding message is student-facing COPY, so it lives in the
+    # locale files with every other student-facing prompt rather than in Settings.
+    # escalate_node needs the parser to read it; reaching through
+    # `generation.templates` would work and would be a lie about the dependency.
+    templates: TemplateParser

@@ -12,7 +12,7 @@ prompts per locale instead of one prompt that says "reply in the user's language
 
 from string import Template
 
-VERSION = "rag/ar/v3"
+VERSION = "rag/ar/v4"
 
 #: يحدد هوية المساعد ودوره وحدوده. يُرسل كرسالة النظام (system message).
 #:
@@ -130,3 +130,17 @@ history_assistant = Template("أنت: $content")
 
 #: مُوسَم على حدة لأن دور المرشد الأكاديمي مرجع معتمد، بخلاف دور المساعد السابق.
 history_advisor = Template("المرشد الأكاديمي: $content")
+
+#: ما يقرؤه الطالب عند رفض أحد البوابات للإجابة المقترحة.
+#:
+#: قالب وليس إعدادًا: كان `ESCALATION_STUDENT_MESSAGE` في الإعدادات بالإنجليزية فقط،
+#: فكان الطالب الذي يسأل بالعربية يتلقى رفضًا بالإنجليزية في نظام ثنائي اللغة.
+escalation_message = Template(
+    " ".join(
+        [
+            "لم أتمكن من الإجابة على هذا السؤال من دليل الطالب بثقة كافية،",
+            "لذلك أحلته إلى مرشد أكاديمي.",
+            "ستجد ردّه هنا عند وصوله.",
+        ]
+    )
+)

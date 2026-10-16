@@ -203,6 +203,7 @@ async def lifespan(app: FastAPI):
                 generation=generation,
                 escalation=escalation,
                 settings=settings,
+                templates=templates,
             ),
             checkpointer=checkpointer,
         )

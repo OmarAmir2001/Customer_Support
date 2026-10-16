@@ -22,13 +22,39 @@ from string import Template
 
 VERSION = "judges/v3"
 
-JUDGE_SYSTEM_PROMPT = (
+JUDGE_SYSTEM_PROMPT = Template(
     "You are a strict evaluator for a university handbook assistant. "
     "You reply with a single JSON object and nothing else: no prose, no markdown fences. "
     'The JSON has exactly two keys: "score" (a number between 0.0 and 1.0) and '
     '"reason" (one short sentence, max 40 words). '
-    "Write the reason in the same language as the question."
+    # NAMED, not "the same language as the question".
+    #
+    # That earlier wording was ignored in practice and the failure was one-directional:
+    # the excerpts are Arabic handbook text, so a judge shown Arabic evidence wrote its
+    # reason in Arabic even for an English question with language=en explicitly set.
+    # An English-speaking student got `لا توجد معلومات عن خطاب رعاية تأشيرة`.
+    #
+    # The model was being asked to infer the question's language from a prompt
+    # dominated by text in another one. The caller already KNOWS the resolved locale —
+    # the router negotiated it before the graph started — so it says so.
+    "Write the reason in $reason_language, regardless of the language of the "
+    "excerpts you were shown."
 )
+
+#: Locale code -> the language name the judge is told to write in.
+#:
+#: Here rather than in locales/ because the judge rubrics are deliberately NOT under
+#: locales/ — they are single-language by design and only this one directive varies.
+#: An unknown locale falls back to English, which is the one locale guaranteed
+#: complete (DEFAULT_LANG).
+REASON_LANGUAGE_NAMES = {"en": "English", "ar": "Arabic"}
+
+
+def judge_system_prompt(language: str | None) -> str:
+    """The judge system message, with the reason language pinned to the locale."""
+    name = REASON_LANGUAGE_NAMES.get((language or "").lower(), "English")
+    return JUDGE_SYSTEM_PROMPT.substitute(reason_language=name)
+
 
 # Gate 1 — runs BEFORE generation, so an unanswerable question never costs a
 # generation call. Scores the retrieval, not the answer.
