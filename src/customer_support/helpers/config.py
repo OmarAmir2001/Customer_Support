@@ -96,6 +96,16 @@ class Settings(BaseSettings):
     RAGAS_MAX_OUTPUT_TOKENS: int = 4096
     RAGAS_REASONING_EFFORT: str | None = "low"
 
+    # What an evaluation run costs, printed at the end of scripts/run_ragas.py.
+    #
+    # Settings rather than constants because a rate card is not a fact about this
+    # code — and because the judge provider is swappable, so the right numbers
+    # change with RAGAS_BACKEND. Defaults are Cohere command-r-08-2024
+    # ($0.15 / $0.60 per 1M as of Oct 2026); CHECK the current rate card before
+    # quoting the figure anywhere.
+    RAGAS_PRICE_PER_1M_INPUT: float = 0.15
+    RAGAS_PRICE_PER_1M_OUTPUT: float = 0.60
+
     # --- provider rate limiting ---
     # A load test found the reason these exist. On Groq's free tier the judge model
     # was capped at 8,000 tokens/minute, reached at FIVE concurrent users: of 94

@@ -21,7 +21,7 @@ from string import Template
 
 # Bumped whenever the wording changes, so an eval run logged to MLflow can be traced
 # back to the exact prompt text that produced it.
-VERSION = "rag/en/v3"
+VERSION = "rag/en/v4"
 
 #: Defines the assistant's identity, role and hard limits. Sent as the system message.
 #:
@@ -155,3 +155,22 @@ history_assistant = Template("You: $content")
 #: Labelled distinctly because an advisor's turn is authoritative in a way the
 #: assistant's own earlier turn is not.
 history_advisor = Template("Academic advisor: $content")
+
+#: What the student reads when a gate refuses the drafted answer.
+#:
+#: A TEMPLATE, not a setting. It was `ESCALATION_STUDENT_MESSAGE` in Settings, which
+#: made it English-only — so an Arabic student asking an Arabic question got an
+#: English refusal, in a system whose entire point is that it is bilingual. A setting
+#: has one value; copy a student reads needs one per locale.
+#:
+#: Note the drafted answer is deliberately NOT included. An answer that failed a gate
+#: must never reach the student, not even as "here is my best guess".
+escalation_message = Template(
+    " ".join(
+        [
+            "I could not answer this from the handbook with confidence,",
+            "so I have passed it to an academic advisor.",
+            "You will find their reply here when they respond.",
+        ]
+    )
+)

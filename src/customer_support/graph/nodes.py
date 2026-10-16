@@ -14,6 +14,7 @@ from customer_support.models.enums.GateEnum import GateEnum, GateFailureReason
 from customer_support.models.graph.conversation import ConversationMessage
 from customer_support.models.graph.graph_state import GraphState
 from customer_support.models.llm_schemas.gate_result import GateResult
+from customer_support.stores.llm.templates import RAG_GROUP
 
 from .dependencies import GraphDeps
 
@@ -56,6 +57,9 @@ def make_grade_node(deps: GraphDeps):
         result = await deps.grading.check_context_relevance(
             question=state["question"],
             chunks=state.get("retrieved_chunks") or [],
+            # Resolved once by the router. The judge writes its reason in this
+            # language, which is what the student reads as escalation_reason.
+            language=state.get("language"),
         )
         return _record_gates(state, [result])
 
@@ -97,6 +101,7 @@ def make_judge_node(deps: GraphDeps):
             question=state["question"],
             answer=state["answer"],
             chunks=state.get("retrieved_chunks") or [],
+            language=state.get("language"),
         )
         verdict = _record_gates(state, results)
 
@@ -119,7 +124,25 @@ def make_escalate_node(deps: GraphDeps):
 
         # The drafted answer is deliberately dropped: an answer that failed a gate
         # must never reach the student, not even as a "here's my best guess".
-        holding_message = deps.settings.ESCALATION_STUDENT_MESSAGE
+        #
+        # Read from the locale files, not from Settings. As a setting it had one
+        # value, so an Arabic student asking in Arabic got an English refusal — the
+        # one place the system stopped being bilingual, on the path a student is
+        # most likely to remember.
+        #
+        # Falls back to the setting rather than raising: this is already the failure
+        # path, and turning a missing template into a 503 would replace a student's
+        # holding message with nothing at all. The warning is how you find out.
+        holding_message = deps.templates.get(
+            RAG_GROUP, "escalation_message", {}, language=state.get("language")
+        )
+        if not holding_message:
+            logger.warning(
+                "escalation_template_missing",
+                language=state.get("language"),
+                falling_back_to="ESCALATION_STUDENT_MESSAGE",
+            )
+            holding_message = deps.settings.ESCALATION_STUDENT_MESSAGE
         return {
             "ticket_id": ticket.ticket_id,
             "answer": holding_message,

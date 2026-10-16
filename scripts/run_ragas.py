@@ -388,9 +388,25 @@ def score_with_ragas(rows: list[dict], settings, embedding_client, *, checkpoint
         # unlike the langchain_openai path there is nothing to rebuild per metric.
         from customer_support.stores.llm.LLMProviderFactory import LLMProviderFactory
 
+        # Fail LOUDLY rather than falling back to JUDGE_MODEL_ID.
+        #
+        # That fallback was a latent bug: JUDGE_MODEL_ID is a Groq model id
+        # (`openai/gpt-oss-20b`), and with RAGAS_BACKEND defaulting to COHERE and
+        # RAGAS_MODEL_ID unset, the Cohere client was handed a Groq model name. The
+        # run dies partway through on a model-not-found error, after paying for
+        # whatever it had already scored. One required setting beats a default that
+        # cannot work.
+        if not settings.RAGAS_MODEL_ID:
+            raise SystemExit(
+                "RAGAS_BACKEND=COHERE needs RAGAS_MODEL_ID set to a COHERE model "
+                "(e.g. command-r-08-2024). It was empty, and falling back to "
+                f"JUDGE_MODEL_ID would send {settings.JUDGE_MODEL_ID!r} — a Groq "
+                "model id — to Cohere. Set it in .env and re-run."
+            )
+
         cohere_judge = _make_app_judge(
             provider=LLMProviderFactory(settings).create(provider_name="COHERE"),
-            model_id=settings.RAGAS_MODEL_ID or settings.JUDGE_MODEL_ID,
+            model_id=settings.RAGAS_MODEL_ID,
             max_output_tokens=settings.RAGAS_MAX_OUTPUT_TOKENS,
             run_config=run_config,
         )
@@ -823,9 +839,77 @@ async def main_async(args) -> int:
             print(f"  {name:38} {value}")
 
     report["status"] = "complete"
+
+    spend = spend_report(settings)
+    report["spend"] = spend
+    scored = max(1, int(report.get("ragas_scored") or len(report.get("rows") or []) or 1))
+    print("\nSPEND (from the providers' own usage fields, not an estimate):")
+    for model, kinds in sorted(spend["per_model"].items()):
+        print(
+            f"  {model:36} in {int(kinds.get('prompt', 0)):>8}  "
+            f"out {int(kinds.get('completion', 0)):>7}"
+        )
+    print(
+        f"  {'TOTAL':36} in {int(spend['prompt_tokens']):>8}  "
+        f"out {int(spend['completion_tokens']):>7}"
+    )
+    print(
+        f"  estimated ${spend['estimated_usd']:.4f} at "
+        f"${spend['prices_per_1m']['input']}/${spend['prices_per_1m']['output']} per 1M"
+    )
+    print(f"  ~${spend['estimated_usd'] / scored:.4f} per question over {scored} scored")
+    print(
+        "  NOTE: only the judge provider is billed here. Generation runs on the "
+        "GENERATION_BACKEND, which is Groq's free tier in this configuration."
+    )
+
     write_report(report, out)
     print(f"\nwrote {out}")
     return report
+
+
+def spend_report(settings) -> dict:
+    """What this run actually cost, from the providers' own usage fields.
+
+    Not an estimate from character counts: both providers report usage per call and
+    `stores/llm/providers/*._record_usage` already feeds it into the
+    `customer_support_tokens_total` counter. This process has its own registry, so
+    reading it here reports exactly this run and nothing else.
+
+    Printed because "will this cost me a dollar?" is the first question anyone asks
+    before scoring an eval set, and the honest answer has to come from a measurement
+    rather than from arithmetic over a guess.
+    """
+    from prometheus_client import REGISTRY
+
+    per_model: dict[str, dict[str, float]] = {}
+    for metric in REGISTRY.collect():
+        if metric.name != "customer_support_tokens":
+            continue
+        for sample in metric.samples:
+            if not sample.name.endswith("_total"):
+                continue
+            model = sample.labels.get("model", "unknown")
+            kind = sample.labels.get("kind", "unknown")
+            per_model.setdefault(model, {}).setdefault(kind, 0.0)
+            per_model[model][kind] += sample.value
+
+    prompt = sum(m.get("prompt", 0.0) for m in per_model.values())
+    completion = sum(m.get("completion", 0.0) for m in per_model.values())
+    cost = (
+        prompt / 1_000_000 * settings.RAGAS_PRICE_PER_1M_INPUT
+        + completion / 1_000_000 * settings.RAGAS_PRICE_PER_1M_OUTPUT
+    )
+    return {
+        "per_model": per_model,
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "estimated_usd": round(cost, 4),
+        "prices_per_1m": {
+            "input": settings.RAGAS_PRICE_PER_1M_INPUT,
+            "output": settings.RAGAS_PRICE_PER_1M_OUTPUT,
+        },
+    }
 
 
 def main() -> int:
