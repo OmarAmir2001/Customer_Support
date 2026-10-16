@@ -137,6 +137,7 @@ async def collect_samples(
     generate: bool = True,
     checkpoint=None,
     existing_rows: list[dict] | None = None,
+    tracer=None,
 ) -> list[dict]:
     """Run retrieval and generation for each question, recording what RAGAS needs.
 
@@ -183,6 +184,12 @@ async def collect_samples(
             "retrieved_sections": [str((c.metadata or {}).get("section")) for c in chunks],
         }
 
+        if tracer is not None:
+            # Opened once the row exists, so the trace carries the question's full
+            # metadata (language, department, expected article) from the start.
+            tracer.start_question(row)
+            tracer.record_retrieval(row)
+
         if not chunks:
             # Nothing retrieved is a real outcome, and for the unanswerable questions
             # it is the CORRECT one. Recorded rather than skipped.
@@ -222,6 +229,23 @@ async def collect_samples(
         except Exception as exc:  # a provider outage should not lose the whole run
             row["answer"] = ""
             row["generation_error"] = str(exc)
+
+        if tracer is not None:
+            # last_usage is the provider's OWN reported count for the call just made,
+            # so Langfuse computes cost from real numbers rather than an estimate.
+            client = deps.generation.generation_client
+            tracer.record_generation(
+                row,
+                model=getattr(client, "generation_model_id", None),
+                usage=getattr(client, "last_usage", None),
+                params={
+                    # From the controller's own settings rather than a `deps.settings`
+                    # the script's ad-hoc Deps does not have. Same values, one source.
+                    "temperature": deps.generation.app_settings.GENERATION_DEFAULT_TEMPERATURE,
+                    "max_tokens": deps.generation.app_settings.GENERATION_DEFAULT_MAX_TOKENS,
+                    "language": item["language"],
+                },
+            )
 
         rows.append(row)
         if checkpoint:
@@ -602,12 +626,16 @@ def retrieval_accuracy(rows: list[dict]) -> dict:
     answerable = [r for r in rows if r["answerable"]]
     unanswerable = [r for r in rows if not r["answerable"]]
 
-    article_hits = sum(
-        1
-        for r in answerable
-        if r.get("expected_article")
-        and any(r["expected_article"] in s for s in r["retrieved_sections"])
-    )
+    # Written back onto each row as well as summed. The aggregate answers "how good
+    # is retrieval"; the per-row value answers "which question failed", which is the
+    # one you actually need — and it is what gets attached to that question's
+    # Langfuse trace as a score.
+    for r in answerable:
+        r["expected_article_retrieved"] = bool(
+            r.get("expected_article")
+            and any(r["expected_article"] in s for s in r["retrieved_sections"])
+        )
+    article_hits = sum(1 for r in answerable if r["expected_article_retrieved"])
     # A leak is the OTHER handbook appearing, not any unexpected source.
     #
     # The first version flagged every question, because `instructor_resolved` chunks —
@@ -616,19 +644,24 @@ def retrieval_accuracy(rows: list[dict]) -> dict:
     # everything, and a check that always fires gets ignored, which is worse than not
     # having it.
     handbooks = {"CS_2023", "IS_2023"}
-    source_leaks = [
-        r["id"]
-        for r in answerable
-        if r["expected_sources"]
-        and any(s in handbooks and s not in r["expected_sources"] for s in r["retrieved_sources"])
-    ]
+    source_leaks = []
+    for r in answerable:
+        leaked = bool(
+            r["expected_sources"]
+            and any(
+                s in handbooks and s not in r["expected_sources"] for s in r["retrieved_sources"]
+            )
+        )
+        r["department_filter_leak"] = leaked
+        if leaked:
+            source_leaks.append(r["id"])
 
-    recalls = [
-        value
-        for r in answerable
-        if (value := ground_truth_recall(r.get("reference") or "", r["retrieved_contexts"]))
-        is not None
-    ]
+    recalls = []
+    for r in answerable:
+        value = ground_truth_recall(r.get("reference") or "", r["retrieved_contexts"])
+        if value is not None:
+            r["ground_truth_recall"] = value
+            recalls.append(value)
 
     return {
         "answerable": len(answerable),
@@ -768,6 +801,19 @@ async def main_async(args) -> int:
             generation_client=judge_client, templates=templates, settings=settings
         )
 
+    # One Langfuse trace per question, all sharing this run name as their session so
+    # the run groups in the Sessions view. The run name carries the corpus hash, so
+    # two runs over different corpora can never be confused for each other — the same
+    # lineage discipline DVC gives the corpus and MLflow gives a sweep.
+    from customer_support.helpers.eval_tracing import EvalTracer
+
+    run_name = f"{mode}-{data_version[:12]}-{stamp}"
+    tracer = EvalTracer(settings, run_name=run_name, metadata=provenance)
+    if tracer.enabled:
+        print(f"\nLangfuse: tracing this run as session {run_name!r}")
+    else:
+        print("\nLangfuse: keys not set, tracing off (the run proceeds unchanged)")
+
     try:
         print("\nretrieval + generation (gates bypassed):")
 
@@ -782,6 +828,7 @@ async def main_async(args) -> int:
             generate=not args.no_generation,
             checkpoint=checkpoint,
             existing_rows=report["rows"],
+            tracer=tracer,
         )
 
         if args.with_gates and not args.no_generation:
@@ -839,6 +886,16 @@ async def main_async(args) -> int:
             print(f"  {name:38} {value}")
 
     report["status"] = "complete"
+
+    # Scores attach LAST, because RAGAS evaluates one metric across every question
+    # before starting the next — so a question's scores only all exist now. This is
+    # the reason EvalTracer holds its traces in a dict instead of a contextvar.
+    for row in report["rows"]:
+        tracer.record_scores(row)
+    tracer.finish()
+    if tracer.enabled:
+        report["langfuse_session"] = run_name
+        print(f"  Langfuse session: {run_name}")
 
     spend = spend_report(settings)
     report["spend"] = spend
