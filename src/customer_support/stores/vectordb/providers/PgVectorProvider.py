@@ -34,9 +34,18 @@ class PgVectorProvider(VectorDBInterface):
         # ORDER BY. Mapping them here keeps the two in step: an index built with
         # vector_cosine_ops is only used by a query ordering on <=>.
         if self.distance_method == DistanceMethodEnums.DOT.value:
+            # `<#>` and vector_ip_ops — inner product, matching what the same
+            # setting selects on Qdrant (models.Distance.DOT). This branch used to
+            # pair `vector_l2_ops` with `<->`, which is Euclidean distance: the one
+            # setting chose two different metrics depending on the backend, and
+            # neither configuration errored.
+            #
+            # pgvector's `<#>` returns the NEGATIVE inner product (so that smaller
+            # is nearer, which is what ORDER BY ... ASC and the index both want), so
+            # negating it recovers the similarity itself.
             self.index_opclass = PgVectorDistanceMethodEnums.DOT.value
-            self.distance_operator = "<->"
-            self.score_expression = "-({column} <-> :vector)"
+            self.distance_operator = "<#>"
+            self.score_expression = "-({column} <#> :vector)"
         else:
             # Cosine is the default: it is what VECTOR_DB_DISTANCE_METHOD ships with.
             self.index_opclass = PgVectorDistanceMethodEnums.COSINE.value
@@ -74,7 +83,21 @@ class PgVectorProvider(VectorDBInterface):
                 records = results.scalars().all()
         return list(records)
 
-    async def get_collection_info(self, collection_name: str) -> dict:
+    async def get_collection_info(self, collection_name: str) -> dict | None:
+        """Table metadata plus a row count, or None when the collection is absent.
+
+        The existence check runs BEFORE the count, and the order is the whole fix.
+        Both statements used to execute up front, so `SELECT COUNT(*) FROM
+        collection_7` raised UndefinedTable on a missing table and the `if not
+        table_data: return None` guard below could never be reached — the one case it
+        was written for was the one case that raised past it. The exception also
+        aborted the open transaction, and `GET /admin/index_info/info/{id}` has no
+        handler for it, so checking stats on a never-pushed project was a guaranteed
+        500. `get_project_or_create_one` makes that easy to hit: it creates the
+        project, so the request sails past the only other check.
+
+        The return type says `dict | None` now that the None branch is real.
+        """
         async with self.db_client() as session:
             async with session.begin():
                 table_info_sql = sql_text("""
@@ -83,16 +106,21 @@ class PgVectorProvider(VectorDBInterface):
                     WHERE tablename = :collection_name
                 """)
 
-                count_sql = sql_text(f"SELECT COUNT(*) FROM {collection_name}")
-
                 table_info = await session.execute(
                     table_info_sql, {"collection_name": collection_name}
                 )
-                record_count = await session.execute(count_sql)
-
                 table_data = table_info.fetchone()
                 if not table_data:
+                    self.logger.info("collection_info_absent", collection=collection_name)
                     return None
+
+                # Only now — the table is known to exist, so this cannot raise
+                # UndefinedTable. Identifier interpolation is unavoidable for a table
+                # name and `collection_name` is config- or int-derived; see the module
+                # note on trusted-by-source identifiers.
+                record_count = await session.execute(
+                    sql_text(f"SELECT COUNT(*) FROM {collection_name}")
+                )
 
                 return {
                     "table_info": {
@@ -156,16 +184,35 @@ class PgVectorProvider(VectorDBInterface):
                     )
                     await session.execute(create_sql)
 
-            await self._create_metadata_index(collection_name=collection_name)
-            return True
+        # OUTSIDE the branch, deliberately.
+        #
+        # This used to sit inside `if not is_collection_existed`, so an existing
+        # collection took the early return and never got the indexes. Since
+        # `create_collection` runs on every push, that meant the idempotent
+        # `CREATE INDEX IF NOT EXISTS` statements were unreachable for exactly the
+        # collections that already had data in them — any collection created before
+        # the indexes were introduced had no way to acquire them short of
+        # `do_reset=True`, which drops and rebuilds the whole table.
+        #
+        # The general shape, worth naming: an `IF NOT EXISTS` guard inside a branch
+        # that only runs for new objects. The idempotency is written; it is just not
+        # reachable.
+        await self._create_supporting_indexes(collection_name=collection_name)
 
-        return False
+        # True when this call created the table, matching the previous contract.
+        return not is_collection_existed
 
-    async def _create_metadata_index(self, collection_name: str) -> None:
-        """Index on metadata ->> 'ticket_id'.
+    async def _create_supporting_indexes(self, collection_name: str) -> None:
+        """Every index this table needs besides the vector one. Idempotent.
 
-        ``delete_by_metadata`` is called on every ticket resolve and reopen; without
-        this index each of those is a sequential scan over the whole collection.
+        Renamed from `_create_metadata_index`: it now also covers the foreign key,
+        which is not metadata, and a name that describes two thirds of what a method
+        does is how the third gets dropped in a later edit.
+
+        Called on EVERY `create_collection`, including for a table that already
+        exists — that is the only path by which an older collection acquires these.
+        Each statement is `CREATE INDEX IF NOT EXISTS`, so the cost on an
+        up-to-date collection is one catalogue lookup per push.
         """
         metadata_column = PgVectorTableSchemeEnums.METADATA.value
         async with self.db_client() as session:
@@ -183,6 +230,21 @@ class PgVectorProvider(VectorDBInterface):
                         f"CREATE INDEX IF NOT EXISTS {collection_name}_source_section_idx "
                         f"ON {collection_name} "
                         f"(({metadata_column} ->> 'source'), ({metadata_column} ->> 'section'))"
+                    )
+                )
+                # The FOREIGN KEY column. Postgres indexes the REFERENCED side
+                # automatically — `chunks.chunk_id` is a primary key — and never the
+                # referencing side. So without this, every cascade from a `chunks`
+                # delete is a sequential scan of this table, once per deleted chunk.
+                #
+                # `/process` with do_reset deletes a whole project's chunks in one
+                # statement, which fans out to N cascading lookups: O(chunks × rows),
+                # so it degrades quadratically. Invisible at 199 chunks, 25 million
+                # row comparisons at 5,000.
+                await session.execute(
+                    sql_text(
+                        f"CREATE INDEX IF NOT EXISTS {collection_name}_chunk_id_idx "
+                        f"ON {collection_name} ({PgVectorTableSchemeEnums.CHUNK_ID.value})"
                     )
                 )
 

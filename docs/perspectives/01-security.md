@@ -129,3 +129,71 @@ identity — not on a student-facing route.
 
 The severity is not a property of F3. It is a property of the missing authentication,
 which F3 happens to expose a route into.
+
+---
+
+## SQL identifier interpolation in `PgVectorProvider`
+
+Raised by dissection part 3. **Not currently exploitable; recorded so the day it
+could be, this is the first place to look.**
+
+### The shape
+
+Nearly every statement in the file interpolates the table name directly:
+
+```python
+sql_text(f"SELECT COUNT(*) FROM {collection_name}")
+sql_text(f"DELETE FROM {collection_name} WHERE ...")
+```
+
+This is unavoidable in kind: **table and column names cannot be bound as SQL
+parameters.** Only values can. So any code that addresses a table chosen at runtime
+must build an identifier into the statement text somehow.
+
+### Why it is safe today
+
+`collection_name` has exactly two sources, and neither is attacker-controlled:
+
+| Source | Why it is trusted |
+|---|---|
+| `settings.KB_COLLECTION_NAME` | configuration, from `.env` at startup |
+| `KBController.create_collection_name(project_id)` → `f"collection_{project_id}"` | `project_id` is a FastAPI `int` path parameter, so a non-integer is rejected with 422 before any handler body runs |
+
+An `int` coerced into `f"collection_{...}"` cannot carry a quote, a semicolon or a
+comment marker. The guarantee is **type coercion at the boundary**, not escaping.
+
+### The inconsistency worth fixing eventually
+
+`delete_collection` is the only method that quotes the identifier:
+
+```python
+safe_table_name = session.bind.dialect.identifier_preparer.quote(collection_name)
+```
+
+One method knows the right technique and thirteen do not use it. That asymmetry is
+the actual risk: it reads as if quoting were optional, so the next person to add a
+method copies a neighbour rather than the one correct example.
+
+### What would make this exploitable
+
+Any of these, and the file becomes the injection surface:
+
+1. A collection name derived from a **request body or query string** rather than an
+   `int` path parameter — a `tenant` or `collection` field, say, which is exactly
+   what multi-tenancy would introduce (see `[[domain-agnostic-is-deferred]]`).
+2. `project_id` widening from `int` to `str` to accommodate a slug.
+3. A collection name read from the database, a config file someone else can write, or
+   an admin UI field.
+
+### Decision
+
+Keep the interpolation; it is structurally necessary. Treat the **boundary type** as
+the control, and make it explicit rather than incidental:
+
+- Collection names are **trusted-by-source**, and the trust comes from `int`
+  coercion at the HTTP boundary. That is a load-bearing property of
+  `create_collection_name`, not an implementation detail.
+- If a collection name ever becomes string-derived, route every statement in this
+  file through `identifier_preparer.quote` first — and prefer an allowlist check
+  against `list_all_collections()` over quoting alone.
+- New methods should follow `delete_collection`, not its thirteen neighbours.
