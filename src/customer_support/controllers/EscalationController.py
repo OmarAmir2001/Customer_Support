@@ -10,6 +10,7 @@ import json
 from datetime import UTC, datetime
 
 from customer_support.helpers.logging_config import get_logger, set_correlation_id
+from customer_support.helpers.pii import redact
 from customer_support.models.db_schemas import RetrievedDocument
 from customer_support.models.db_schemas.customer_support.schemes.ticket import Ticket
 from customer_support.models.enums.TicketStatusEnum import (
@@ -126,19 +127,26 @@ class EscalationController(BaseController):
         # to check and no reason to pay for a judge call.
         hold_reason = None
         if promote_to_kb and self.promotion is not None:
-            assessment = await self.promotion.assess(
+            # check_contradiction, NOT assess.
+            #
+            # Only the veto is read here. assess() also runs the generalizability
+            # judge, whose answer feeds `suggested_promote` — the checkbox DEFAULT,
+            # which is meaningless once the advisor has already ticked the box and hit
+            # resolve. Every promoted resolve was paying for a judge call it threw
+            # away, on the path the rate limits exist for.
+            verdict = await self.promotion.check_contradiction(
                 question=ticket.question,
                 answer=advisor_answer,
                 department=ticket.department,
             )
-            if assessment.held:
-                hold_reason = assessment.hold_reason()
+            if verdict.held:
+                hold_reason = verdict.reason
                 promote_to_kb = False
                 self.logger.warning(
                     "promotion_held_on_contradiction",
                     ticket_id=ticket_id,
                     reason=hold_reason,
-                    contradiction_score=round(assessment.contradiction_score, 3),
+                    contradiction_score=round(verdict.score, 3),
                 )
 
         ticket = await self.ticket_model.apply_transition(
@@ -242,6 +250,25 @@ class EscalationController(BaseController):
             fields={"promoted_to_kb": False, "promoted_at": None},
         )
 
+        # UNCONDITIONAL, and a guard here was considered and rejected. Recording why,
+        # because "skip the sync when the ticket cannot own a vector" looks like an
+        # obvious free win and is not:
+        #
+        # 1. The obvious guard — `ticket.promoted_to_kb or ticket.status in INDEXABLE`
+        #    — reads the ticket AFTER apply_transition has already set the flag False
+        #    and the status to rejected, so it skips every single time.
+        # 2. Reading the PRE-transition state instead still fails, because REJECTED is
+        #    reachable only from `pending` and `under_review`. Neither is in INDEXABLE,
+        #    so that half of the condition is dead code.
+        # 3. Worse, the orphan this call exists to repair is characterised by exactly
+        #    `promoted_to_kb == False` with a live vector: reopen() clears the flag and
+        #    THEN syncs best-effort, so a failed sync leaves the flag false and the row
+        #    behind. Guarding on the flag skips precisely the case the call was written
+        #    for.
+        #
+        # What remains is the cost: one DELETE matching zero rows on a partial index.
+        # The `_require_ticket` round trip above happens either way. That is a fair
+        # price for closing the one hole nothing else can close.
         await self._sync_quietly(ticket_id)
         return ticket
 
@@ -267,6 +294,34 @@ class EscalationController(BaseController):
 
     # -------------------------------------------------- Section 3 delivery
 
+    def _scrub(self, text: str | None, *, where: str, ticket_id: int) -> str | None:
+        """Redact PII from advisor free text on its way OUT of the ticket.
+
+        The ticket itself keeps the advisor's exact words: it is the source of truth
+        and the audit record, and an advisor's original phrasing is what a later
+        reviewer needs. What gets scrubbed are the two DERIVED copies — the thread the
+        student reads and the vector the knowledge base retrieves — because those are
+        the ones that reach someone other than the advisor who typed them.
+
+        This also keeps the project's existing rule: redaction happens on the way out,
+        never on the way in.
+
+        One helper rather than two call sites, because two call sites redacting "the
+        same" field is how one of them later stops.
+        """
+        if not text or not self.app_settings.PII_REDACTION_ENABLED:
+            return text
+
+        scrubbed, found = redact(text)
+        if found:
+            self.logger.warning(
+                "pii_redacted",
+                where=where,
+                ticket_id=ticket_id,
+                kinds=dict(found),
+            )
+        return scrubbed
+
     async def _deliver_to_thread(self, ticket: Ticket) -> None:
         """Write the advisor's answer into the persisted thread state.
 
@@ -285,9 +340,58 @@ class EscalationController(BaseController):
             )
             return
 
+        config = {"configurable": {"thread_id": ticket.thread_id}}
+
+        # F7: refuse to CREATE a thread here.
+        #
+        # `aupdate_state` on a thread_id with no checkpoint does not fail — it writes
+        # a new one. So if a checkpoint is ever gone (manual cleanup, a restored
+        # database, a future retention policy on the checkpoints table), resolving its
+        # ticket would produce a brand-new thread containing exactly one message: the
+        # advisor's answer. The student then opens the conversation and reads a reply
+        # to nothing, with no question and no holding message above it.
+        #
+        # This is a seam between two positions the system already holds: the messages
+        # reducer states that checkpoints are working memory and may be trimmed, while
+        # this write assumed the checkpoint exists. Nothing deletes checkpoints today,
+        # so the seam is closed by an absence rather than by a guarantee.
+        #
+        # Nothing is lost by declining: the answer is on the ticket, which is the
+        # source of truth, and still reachable from the advisor UI. The error line is
+        # the only way anyone would learn a checkpoint had vanished.
+        try:
+            snapshot = await self.thread_writer.aget_state(config)
+        except Exception as exc:
+            self.logger.error(
+                "thread_state_unreadable_answer_not_delivered",
+                ticket_id=ticket.ticket_id,
+                thread_id=ticket.thread_id,
+                error=str(exc),
+                exc_info=True,
+            )
+            return
+
+        if snapshot is None or not snapshot.values:
+            self.logger.error(
+                "thread_missing_answer_not_delivered",
+                ticket_id=ticket.ticket_id,
+                thread_id=ticket.thread_id,
+                detail=(
+                    "no checkpoint for this thread; declining to create a one-message "
+                    "conversation. The answer remains on the ticket."
+                ),
+            )
+            return
+
+        # Scrubbed once, used for both the transcript turn and the mirrored
+        # `answer` field, so the student cannot read one redacted and one raw.
+        delivered = self._scrub(
+            ticket.advisor_answer, where="thread_delivery", ticket_id=ticket.ticket_id
+        )
+
         try:
             await self.thread_writer.aupdate_state(
-                {"configurable": {"thread_id": ticket.thread_id}},
+                config,
                 {
                     # APPENDED, via the messages reducer. This is the fix the whole
                     # transcript refactor exists for: the advisor's answer is the next
@@ -296,7 +400,7 @@ class EscalationController(BaseController):
                     # the instructor's message, and a single `answer` slot could not.
                     "messages": [
                         ConversationMessage.advisor(
-                            content=ticket.advisor_answer,
+                            content=delivered,
                             ticket_id=ticket.ticket_id,
                             author=ticket.resolved_by,
                         )
@@ -304,7 +408,7 @@ class EscalationController(BaseController):
                     # Still mirrored onto the run-scoped fields so a client reading
                     # only "the latest answer" sees the advisor's, not the holding
                     # message. The transcript above is what actually preserves history.
-                    "answer": ticket.advisor_answer,
+                    "answer": delivered,
                     "resolved_by": ticket.resolved_by,
                     "ticket_id": ticket.ticket_id,
                 },
@@ -384,7 +488,13 @@ class EscalationController(BaseController):
         # 2. re-embed the current state and insert exactly one row.
         # to_thread because the provider SDKs are synchronous: embedding inline would
         # block the event loop for the whole round trip.
-        text = f"Question: {ticket.question}\nAnswer: {ticket.advisor_answer}"
+        # Both halves are free text and both are redacted. The question is the
+        # student's own words, so "my number is 010..., when are exams?" would
+        # otherwise be embedded verbatim and retrievable by anyone.
+        text = (
+            f"Question: {self._scrub(ticket.question, where='kb_question', ticket_id=ticket_id)}\n"
+            f"Answer: {self._scrub(ticket.advisor_answer, where='kb_answer', ticket_id=ticket_id)}"
+        )
         vectors = await asyncio.to_thread(
             self.embedding_client.embed_text,
             text,
