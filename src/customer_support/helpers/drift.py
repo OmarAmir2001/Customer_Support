@@ -28,7 +28,10 @@ from customer_support.helpers.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-#: Where build_drift_baseline.py writes, and where main.py looks.
+#: Where build_drift_baseline.py writes. The APP reads
+#: `settings.DRIFT_BASELINE_PATH` instead — this stays as the script's default and as
+#: the fallback for a direct caller, but it is deliberately no longer the only
+#: authority, because it resolves against the process working directory.
 DEFAULT_BASELINE_PATH = Path("data/eval/drift_baseline.json")
 
 
@@ -88,7 +91,21 @@ def load_baseline(path: Path | str = DEFAULT_BASELINE_PATH) -> dict | None:
     """
     path = Path(path)
     if not path.exists():
-        logger.info("drift_baseline_absent", path=str(path))
+        # WARNING, not info, and with the RESOLVED ABSOLUTE path.
+        #
+        # A missing baseline means the drift metric is dead for the life of the
+        # process, and a flat panel is indistinguishable from a healthy one over
+        # stable traffic — so this is the only signal that the measurement is not
+        # happening. The absolute path is what makes it actionable: the commonest
+        # cause is a relative path resolved against an unexpected working directory,
+        # and `data/eval/drift_baseline.json` does not tell you which one.
+        logger.warning(
+            "drift_baseline_absent",
+            path=str(path),
+            resolved=str(path.resolve()),
+            cwd=str(Path.cwd()),
+            detail="query drift will not be recorded; see DRIFT_BASELINE_PATH",
+        )
         return None
 
     try:

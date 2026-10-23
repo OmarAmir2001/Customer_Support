@@ -252,3 +252,48 @@ def test_the_question_is_used_when_nothing_was_stated():
     assert negotiate_language(parser, question="كم عدد الساعات المعتمدة؟") == "ar"
     # and an English question still lands on the configured primary
     assert negotiate_language(parser, question="How many credit hours?") == "en"
+
+
+def test_every_discovered_locale_has_a_judge_reason_language():
+    """F20: two authorities deciding one fact, and they agree only by hand.
+
+    Supported languages are DISCOVERED from the filesystem; the judge's reason
+    language comes from a hand-written dict. Adding `locales/fr/` currently looks
+    like a pure filesystem operation — French prompts render, a French student gets
+    a French answer, and the judge's `reason` silently reverts to English.
+
+    That string is not internal. It is `escalation_reason` in the response the
+    student reads and `gate_reason` on the ticket the advisor reads, so the student
+    would get a French holding message with an English explanation of why — the same
+    leak this project already fixed twice, one level up.
+
+    This test is the reason a third fix is not needed: adding a locale now fails here
+    rather than in production.
+    """
+    from customer_support.stores.llm.templates import TemplateParser
+    from customer_support.stores.llm.templates.judges import REASON_LANGUAGE_NAMES
+
+    parser = TemplateParser(primary_language="en", default_language="en")
+    discovered = set(parser.supported_languages)
+    mapped = set(REASON_LANGUAGE_NAMES)
+
+    missing = discovered - mapped
+    assert not missing, (
+        f"locales {sorted(missing)} exist but have no entry in REASON_LANGUAGE_NAMES, "
+        "so their escalation reasons would come back in English"
+    )
+
+
+def test_the_reason_language_map_has_no_entries_for_locales_that_do_not_exist():
+    """The other direction: a stale entry is a smaller problem but still a lie.
+
+    It means someone removed a locale and left the mapping, so the dict stops
+    describing what the system supports.
+    """
+    from customer_support.stores.llm.templates import TemplateParser
+    from customer_support.stores.llm.templates.judges import REASON_LANGUAGE_NAMES
+
+    parser = TemplateParser(primary_language="en", default_language="en")
+    stale = set(REASON_LANGUAGE_NAMES) - set(parser.supported_languages)
+
+    assert not stale, f"REASON_LANGUAGE_NAMES maps {sorted(stale)}, which is not a locale"

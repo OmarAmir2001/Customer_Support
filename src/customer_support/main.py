@@ -145,7 +145,7 @@ async def lifespan(app: FastAPI):
         # Loaded once at boot, not per request: it is a 384-float constant, and a
         # missing file disables the drift metric and nothing else — a fresh clone
         # has no baseline because building one costs embedding calls.
-        drift_baseline = load_baseline()
+        drift_baseline = load_baseline(settings.DRIFT_BASELINE_PATH)
 
         retrieval = RetrievalController(
             vectordb_client=vectordb_client,

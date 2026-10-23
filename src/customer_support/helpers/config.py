@@ -201,6 +201,20 @@ class Settings(BaseSettings):
     LANGFUSE_SECRET_KEY: str = ""
     LANGFUSE_HOST: str = "http://localhost:3002"
 
+    # Where the query-drift centroid lives.
+    #
+    # Configuration rather than a module constant, because the old
+    # `Path("data/eval/drift_baseline.json")` resolved against the process WORKING
+    # DIRECTORY. It worked only because the Dockerfile sets WORKDIR to the repo root
+    # and uvicorn is started from there. Run the app from anywhere else and the file
+    # is simply not found: the app boots, serves correctly, and the drift panel is
+    # flat forever — and a flat panel looks exactly like a working one over stable
+    # traffic.
+    #
+    # Same class as the path bug that introduced ASSETS_DIR. A location should come
+    # from configuration, not from where the process happens to be.
+    DRIFT_BASELINE_PATH: str = "data/eval/drift_baseline.json"
+
     # --- guardrails (PII) ---
     # On by default, and that is the point: a redactor you have to remember to turn
     # on is not a guardrail. Off is for reproducing a report of over-redaction, never

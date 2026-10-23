@@ -127,9 +127,28 @@ def start_trace(*, thread_id: str, question: str, student_id: str, **metadata) -
             id=thread_id,
             name="chat",
             input={"question": _scrub(question)},
+            # NOT scrubbed, and that is a decision rather than an omission.
+            #
+            # A student id is personal data leaving to a third party. It is also
+            # load-bearing: Langfuse's per-user grouping and the "which students
+            # escalate most" question both key on it, and a redacted id groups
+            # nothing. The trade is accepted deliberately — see
+            # docs/perspectives/01-security.md.
             user_id=student_id,
             session_id=thread_id,
-            metadata=metadata or None,
+            # Scrubbed at the BOUNDARY, not per field.
+            #
+            # This used to pass `metadata` straight through while `input` above was
+            # scrubbed — one guarded field out of four, with the asymmetry invisible
+            # at the call site. `**metadata` is an open door: today's callers pass a
+            # locale code and a CS|IS literal, but the next field someone adds — a
+            # question summary, a retrieval snippet, a profile fragment — would have
+            # gone to a third-party service in the clear, in the same call as a field
+            # that was being scrubbed.
+            #
+            # Guarding the boundary rather than the field means a new caller is
+            # covered by default.
+            metadata={key: _scrub(value) for key, value in metadata.items()} or None,
         )
     except Exception as exc:
         logger.warning("tracing_start_failed", error=str(exc))
@@ -242,7 +261,9 @@ def finish_trace(trace: Any, *, answer: str | None, escalated: bool, **metadata)
     try:
         trace.update(
             output={"answer": _scrub(answer), "escalated": escalated},
-            metadata=metadata or None,
+            # Same boundary rule as start_trace. Today this carries failed_gate and
+            # ticket_id; a future field should not have to remember.
+            metadata={key: _scrub(value) for key, value in metadata.items()} or None,
         )
     except Exception as exc:
         logger.warning("tracing_finish_failed", error=str(exc))
