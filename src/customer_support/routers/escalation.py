@@ -3,8 +3,9 @@ the graph calls, so resolve logic exists once."""
 
 from contextlib import contextmanager
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
+from customer_support.helpers.auth import RequireAdvisor, advisor_identity
 from customer_support.helpers.logging_config import get_logger
 from customer_support.models.enums.TicketStatusEnum import (
     ConcurrentTicketUpdate,
@@ -12,7 +13,6 @@ from customer_support.models.enums.TicketStatusEnum import (
     TicketStatus,
 )
 from customer_support.routers.schemas.escalation import (
-    ClaimRequest,
     CloseRequest,
     PromotionAssessmentRequest,
     PromotionAssessmentResponse,
@@ -26,7 +26,14 @@ from customer_support.routers.schemas.escalation import (
 
 logger = get_logger(__name__)
 
-escalation_router = APIRouter(prefix="/api/v1/escalation", tags=["Escalation"])
+escalation_router = APIRouter(
+    prefix="/api/v1/escalation",
+    tags=["Escalation"],
+    # Applied to the ROUTER, not per endpoint. "Every route here needs an
+    # authenticated advisor" is a property of the router; a per-endpoint list is one
+    # someone forgets to add to when they add the ninth transition.
+    dependencies=[RequireAdvisor],
+)
 
 
 @contextmanager
@@ -88,22 +95,31 @@ async def get_ticket(request: Request, ticket_id: int) -> TicketDetail:
 
 
 @escalation_router.post("/tickets/{ticket_id}/claim", response_model=TicketSummary)
-async def claim_ticket(request: Request, ticket_id: int, payload: ClaimRequest) -> TicketSummary:
+async def claim_ticket(
+    request: Request,
+    ticket_id: int,
+    advisor: str = Depends(advisor_identity),
+) -> TicketSummary:
     with _lifecycle_errors():
         ticket = await request.app.state.escalation_controller.claim(
-            ticket_id=ticket_id, advisor_id=payload.advisor_id
+            ticket_id=ticket_id, advisor_id=advisor
         )
 
     return TicketSummary.model_validate(ticket)
 
 
 @escalation_router.post("/tickets/{ticket_id}/resolve", response_model=TicketDetail)
-async def resolve_ticket(request: Request, ticket_id: int, payload: ResolveRequest) -> TicketDetail:
+async def resolve_ticket(
+    request: Request,
+    ticket_id: int,
+    payload: ResolveRequest,
+    advisor: str = Depends(advisor_identity),
+) -> TicketDetail:
     with _lifecycle_errors():
         ticket = await request.app.state.escalation_controller.resolve(
             ticket_id=ticket_id,
             advisor_answer=payload.advisor_answer,
-            advisor_id=payload.advisor_id,
+            advisor_id=advisor,
             promote_to_kb=payload.promote_to_kb,
         )
 
@@ -112,7 +128,10 @@ async def resolve_ticket(request: Request, ticket_id: int, payload: ResolveReque
 
 @escalation_router.post("/tickets/{ticket_id}/release", response_model=TicketSummary)
 async def release_ticket(
-    request: Request, ticket_id: int, payload: ReleaseRequest
+    request: Request,
+    ticket_id: int,
+    payload: ReleaseRequest,
+    advisor: str = Depends(advisor_identity),
 ) -> TicketSummary:
     """Hand a claimed ticket back to the pending queue.
 
@@ -122,28 +141,38 @@ async def release_ticket(
     """
     with _lifecycle_errors():
         ticket = await request.app.state.escalation_controller.release(
-            ticket_id=ticket_id, actor=payload.advisor_id, note=payload.note
+            ticket_id=ticket_id, actor=advisor, note=payload.note
         )
 
     return TicketSummary.model_validate(ticket)
 
 
 @escalation_router.post("/tickets/{ticket_id}/reject", response_model=TicketDetail)
-async def reject_ticket(request: Request, ticket_id: int, payload: RejectRequest) -> TicketDetail:
+async def reject_ticket(
+    request: Request,
+    ticket_id: int,
+    payload: RejectRequest,
+    advisor: str = Depends(advisor_identity),
+) -> TicketDetail:
     """Refuse a question outright: out of scope, spam, or not handbook material.
 
     The reason is required — the status history is the only record of the decision.
     """
     with _lifecycle_errors():
         ticket = await request.app.state.escalation_controller.reject(
-            ticket_id=ticket_id, actor=payload.advisor_id, reason=payload.reason
+            ticket_id=ticket_id, actor=advisor, reason=payload.reason
         )
 
     return TicketDetail.model_validate(ticket)
 
 
 @escalation_router.post("/tickets/{ticket_id}/close", response_model=TicketDetail)
-async def close_ticket(request: Request, ticket_id: int, payload: CloseRequest) -> TicketDetail:
+async def close_ticket(
+    request: Request,
+    ticket_id: int,
+    payload: CloseRequest,
+    advisor: str = Depends(advisor_identity),
+) -> TicketDetail:
     """Finish a resolved ticket. Terminal unless someone reopens it.
 
     A closed ticket KEEPS its promoted answer in the knowledge base — closing is the
@@ -151,14 +180,19 @@ async def close_ticket(request: Request, ticket_id: int, payload: CloseRequest) 
     """
     with _lifecycle_errors():
         ticket = await request.app.state.escalation_controller.close(
-            ticket_id=ticket_id, actor=payload.advisor_id, note=payload.note
+            ticket_id=ticket_id, actor=advisor, note=payload.note
         )
 
     return TicketDetail.model_validate(ticket)
 
 
 @escalation_router.post("/tickets/{ticket_id}/reopen", response_model=TicketDetail)
-async def reopen_ticket(request: Request, ticket_id: int, payload: ReopenRequest) -> TicketDetail:
+async def reopen_ticket(
+    request: Request,
+    ticket_id: int,
+    payload: ReopenRequest,
+    advisor: str = Depends(advisor_identity),
+) -> TicketDetail:
     """Send a finished ticket back for another look.
 
     Reachable from resolved, rejected and closed — the "this did not actually answer
@@ -170,7 +204,7 @@ async def reopen_ticket(request: Request, ticket_id: int, payload: ReopenRequest
     """
     with _lifecycle_errors():
         ticket = await request.app.state.escalation_controller.reopen(
-            ticket_id=ticket_id, actor=payload.actor, note=payload.note
+            ticket_id=ticket_id, actor=advisor, note=payload.note
         )
 
     return TicketDetail.model_validate(ticket)
@@ -180,7 +214,9 @@ async def reopen_ticket(request: Request, ticket_id: int, payload: ReopenRequest
     "/tickets/{ticket_id}/promotion-assessment", response_model=PromotionAssessmentResponse
 )
 async def assess_promotion(
-    request: Request, ticket_id: int, payload: PromotionAssessmentRequest
+    request: Request,
+    ticket_id: int,
+    payload: PromotionAssessmentRequest,
 ) -> PromotionAssessmentResponse:
     """What the machine advises about promoting this answer (Section 5).
 

@@ -604,6 +604,28 @@ and its `production` alias and legacy Production stage are verified to agree.
 | `POST` | `/api/v1/admin/knowledge_base/search/{project_id}` | Debug retrieval exactly as the agent sees it      |
 | `GET`  | `/api/v1/admin/index_info/info/{project_id}`     | Collection stats                                    |
 
+### Authentication
+
+The **advisor**, **admin** and **profile** routes require an API key in `X-API-Key`.
+The key *identifies* the actor: `resolved_by` and every `ticket_status_history` entry
+come from the credential, never from a request field. There is deliberately no
+`advisor_id` in any request body — it used to be one, which meant anyone who could
+reach the port could resolve a ticket as anybody and the audit trail would record the
+impersonation as fact.
+
+`ADVISOR_API_KEYS` maps key → advisor id. **An empty map denies every one of those
+routes** — a missing credential set must not read as "no authentication required".
+`.env.example` ships an obvious development key so the quick start works; it is in a
+public repo and is not a secret.
+
+nginx additionally restricts `/api/v1/{escalation,admin,profile}` to private ranges,
+behind the key rather than instead of it.
+
+**`POST /api/v1/chat` and `/ask` are deliberately open.** Students have no credential,
+and `student_id` is an unauthenticated claim — a real gap, analysed in
+[docs/perspectives/01-security.md](docs/perspectives/01-security.md) rather than
+papered over.
+
 `sources[]` carries **citations, not chunk ids** — `CS_2023 — مادة (٢٤)`, the section a student can open and check. A promoted ticket answer cites its ticket instead. A chunk that cannot name its origin is omitted rather than given a placeholder, and the list is empty on an escalation, where the `answer` field holds the holding message rather than an answer.
 
 There are **two endpoints called `/ask`** and they are not the same thing. This one, on the FastAPI app, is the gated path: three judge gates, escalation, the full contract above. The other is on the BentoML service (`:3001`) and **streams** — tokens appear as the model produces them, which cannot be gated, because faithfulness and answer relevance can only be scored on a complete answer. That service says so in its own payload. PII redaction runs on both.

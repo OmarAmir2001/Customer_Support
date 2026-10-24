@@ -235,6 +235,26 @@ class Settings(BaseSettings):
     # from configuration, not from where the process happens to be.
     DRIFT_BASELINE_PATH: str = "data/eval/drift_baseline.json"
 
+    # --- advisor / operator authentication ---
+    # API key -> the advisor id that key authenticates as.
+    #
+    # The KEY IDENTIFIES THE ACTOR, which is the point. Before this, every lifecycle
+    # endpoint took `advisor_id` as a request field, so anyone who could reach the
+    # port could resolve a ticket as anybody and the `ticket_status_history` audit
+    # trail would record the impersonation as fact. Taking the id from the credential
+    # makes the trail mean something.
+    #
+    # An EMPTY map denies every advisor and admin route — fail closed. A missing
+    # credential set must not read as "no authentication required", which is how
+    # most of these get shipped open.
+    #
+    # .env.example ships an obvious development key so a fresh clone can still demo
+    # the escalation loop. Rotate it for anything real; it is in a public repo.
+    ADVISOR_API_KEYS: dict[str, str] = {}
+
+    #: Header the key arrives in.
+    ADVISOR_API_KEY_HEADER: str = "X-API-Key"
+
     # --- guardrails (PII) ---
     # On by default, and that is the point: a redactor you have to remember to turn
     # on is not a guardrail. Off is for reproducing a report of over-redaction, never

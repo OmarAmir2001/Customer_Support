@@ -25,7 +25,6 @@ import html
 import gradio as gr
 
 from api_client import ApiClient, ApiError
-from settings import settings
 from theme import banner
 
 STATUSES = [
@@ -183,7 +182,12 @@ def build(client: ApiClient) -> None:
     )
 
     with gr.Row():
-        advisor_id = gr.Textbox(label="Acting as", value=settings.default_advisor_id, scale=2)
+        gr.Markdown(
+            "<small>**Acting as the advisor the API key maps to.** The "
+            "“Acting as” box is gone on purpose: the actor now comes from the "
+            "credential, not from a text field, so the audit trail records who "
+            "really acted.</small>"
+        )
         status_filter = gr.Dropdown(
             choices=[("any status", "")] + [(s, s) for s in STATUSES if s],
             value="pending",
@@ -390,33 +394,33 @@ def build(client: ApiClient) -> None:
     open_button.click(open_ticket, inputs=[ticket_id], outputs=detail_outputs)
 
     claim_button.click(
-        lambda tid, who: _action(client.claim, tid, who),
-        inputs=[ticket_id, advisor_id],
+        lambda tid: _action(client.claim, tid),
+        inputs=[ticket_id],
         outputs=detail_outputs,
     )
     release_button.click(
-        lambda tid, who: _action(client.release, tid, who, "released from the UI"),
-        inputs=[ticket_id, advisor_id],
+        lambda tid: _action(client.release, tid, "released from the UI"),
+        inputs=[ticket_id],
         outputs=detail_outputs,
     )
     close_button.click(
-        lambda tid, who: _action(client.close, tid, who, "closed from the UI"),
-        inputs=[ticket_id, advisor_id],
+        lambda tid: _action(client.close, tid, "closed from the UI"),
+        inputs=[ticket_id],
         outputs=detail_outputs,
     )
     reopen_button.click(
-        lambda tid, who: _action(client.reopen, tid, who, "reopened from the UI"),
-        inputs=[ticket_id, advisor_id],
+        lambda tid: _action(client.reopen, tid, "reopened from the UI"),
+        inputs=[ticket_id],
         outputs=detail_outputs,
     )
     resolve_button.click(
-        lambda tid, who, text, flag: _action(client.resolve, tid, who, text, bool(flag)),
-        inputs=[ticket_id, advisor_id, draft, promote],
+        lambda tid, text, flag: _action(client.resolve, tid, text, bool(flag)),
+        inputs=[ticket_id, draft, promote],
         outputs=detail_outputs,
     )
     reject_button.click(
-        lambda tid, who, why: _action(client.reject, tid, who, why),
-        inputs=[ticket_id, advisor_id, reason],
+        lambda tid, why: _action(client.reject, tid, why),
+        inputs=[ticket_id, reason],
         outputs=detail_outputs,
     )
 

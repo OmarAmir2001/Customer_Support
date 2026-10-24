@@ -42,13 +42,17 @@ class ApiClient:
         self.base_url = (base_url or settings.api_base_url).rstrip("/")
         self.stream_base_url = (stream_base_url or settings.stream_base_url).rstrip("/")
         self.timeout = timeout or settings.request_timeout
+        # Sent on every request. The advisor, admin and profile routes require it,
+        # and the KEY identifies the actor — so no method here passes an advisor id
+        # any more. Harmless on /chat, which ignores it.
+        self.headers = {"X-API-Key": settings.advisor_api_key}
 
     # ------------------------------------------------------------- internals
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         url = f"{self.base_url}{path}"
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            with httpx.Client(timeout=self.timeout, headers=self.headers) as client:
                 response = client.request(method, url, **kwargs)
         except httpx.ConnectError as exc:
             raise ApiError(
@@ -89,6 +93,13 @@ class ApiClient:
             detail = response.text[:400]
 
         # Translated, not collapsed: these mean different things to an advisor.
+        if response.status_code == 401:
+            raise ApiError(
+                "Not authorised (401). The advisor routes need a valid API key — set "
+                "UI_ADVISOR_API_KEY to one of the keys in the backend's "
+                "ADVISOR_API_KEYS. An empty ADVISOR_API_KEYS denies everything by "
+                "design."
+            )
         if response.status_code == 404:
             raise ApiError(f"Not found. {detail}")
         if response.status_code == 409:
@@ -192,52 +203,43 @@ class ApiClient:
     def ticket(self, ticket_id: int) -> dict:
         return self._request("GET", f"/api/v1/escalation/tickets/{ticket_id}")
 
-    def claim(self, ticket_id: int, advisor_id: str) -> dict:
-        return self._request(
-            "POST",
-            f"/api/v1/escalation/tickets/{ticket_id}/claim",
-            json={"advisor_id": advisor_id},
-        )
+    def claim(self, ticket_id: int) -> dict:
+        """No body at all now: the actor was the only thing in it."""
+        return self._request("POST", f"/api/v1/escalation/tickets/{ticket_id}/claim")
 
-    def release(self, ticket_id: int, advisor_id: str, note: str | None = None) -> dict:
+    def release(self, ticket_id: int, note: str | None = None) -> dict:
         return self._request(
             "POST",
             f"/api/v1/escalation/tickets/{ticket_id}/release",
-            json={"advisor_id": advisor_id, "note": note or None},
+            json={"note": note or None},
         )
 
-    def resolve(
-        self, ticket_id: int, advisor_id: str, advisor_answer: str, promote_to_kb: bool
-    ) -> dict:
+    def resolve(self, ticket_id: int, advisor_answer: str, promote_to_kb: bool) -> dict:
         return self._request(
             "POST",
             f"/api/v1/escalation/tickets/{ticket_id}/resolve",
-            json={
-                "advisor_id": advisor_id,
-                "advisor_answer": advisor_answer,
-                "promote_to_kb": promote_to_kb,
-            },
+            json={"advisor_answer": advisor_answer, "promote_to_kb": promote_to_kb},
         )
 
-    def reject(self, ticket_id: int, advisor_id: str, reason: str) -> dict:
+    def reject(self, ticket_id: int, reason: str) -> dict:
         return self._request(
             "POST",
             f"/api/v1/escalation/tickets/{ticket_id}/reject",
-            json={"advisor_id": advisor_id, "reason": reason},
+            json={"reason": reason},
         )
 
-    def close(self, ticket_id: int, advisor_id: str, note: str | None = None) -> dict:
+    def close(self, ticket_id: int, note: str | None = None) -> dict:
         return self._request(
             "POST",
             f"/api/v1/escalation/tickets/{ticket_id}/close",
-            json={"advisor_id": advisor_id, "note": note or None},
+            json={"note": note or None},
         )
 
-    def reopen(self, ticket_id: int, actor: str, note: str | None = None) -> dict:
+    def reopen(self, ticket_id: int, note: str | None = None) -> dict:
         return self._request(
             "POST",
             f"/api/v1/escalation/tickets/{ticket_id}/reopen",
-            json={"actor": actor, "note": note or None},
+            json={"note": note or None},
         )
 
     def assess_promotion(self, ticket_id: int, advisor_answer: str) -> dict:
