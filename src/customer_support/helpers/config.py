@@ -163,6 +163,26 @@ class Settings(BaseSettings):
     PRIMARY_LANG: str = "en"
     DEFAULT_LANG: str = "en"
 
+    # Handbook source name -> department, and the ONE authority for both halves.
+    #
+    # This was a module constant in ProcessController while RetrievalController kept a
+    # SEPARATE hardcoded tuple of the same names. Two lists deciding one fact, which
+    # is the recurring failure in this codebase: publish a CS_2025 handbook and
+    # ingestion rejects it as unknown, while retrieval — if it got in — would rank it
+    # BELOW instructor_resolved, silently inverting the rule that the handbook always
+    # outranks a promoted ticket answer.
+    #
+    # Configuration, so adding next year's handbook is an .env change rather than a
+    # code change in two files. JSON object in .env, like FILE_ALLOWED_TYPES.
+    HANDBOOK_SOURCES: dict[str, str] = {
+        "CS_2023": "CS",
+        "IS_2023": "IS",
+        # The committed synthetic samples, so a fresh clone can run the whole loop
+        # without the DVC remote. See data/handbooks_sample/.
+        "CS_SAMPLE": "CS",
+        "IS_SAMPLE": "IS",
+    }
+
     # --- retrieval ---
     KB_COLLECTION_NAME: str = "collection_1"
     RETRIEVAL_TOP_K: int = 5
@@ -200,6 +220,40 @@ class Settings(BaseSettings):
     LANGFUSE_PUBLIC_KEY: str = ""
     LANGFUSE_SECRET_KEY: str = ""
     LANGFUSE_HOST: str = "http://localhost:3002"
+
+    # Where the query-drift centroid lives.
+    #
+    # Configuration rather than a module constant, because the old
+    # `Path("data/eval/drift_baseline.json")` resolved against the process WORKING
+    # DIRECTORY. It worked only because the Dockerfile sets WORKDIR to the repo root
+    # and uvicorn is started from there. Run the app from anywhere else and the file
+    # is simply not found: the app boots, serves correctly, and the drift panel is
+    # flat forever — and a flat panel looks exactly like a working one over stable
+    # traffic.
+    #
+    # Same class as the path bug that introduced ASSETS_DIR. A location should come
+    # from configuration, not from where the process happens to be.
+    DRIFT_BASELINE_PATH: str = "data/eval/drift_baseline.json"
+
+    # --- advisor / operator authentication ---
+    # API key -> the advisor id that key authenticates as.
+    #
+    # The KEY IDENTIFIES THE ACTOR, which is the point. Before this, every lifecycle
+    # endpoint took `advisor_id` as a request field, so anyone who could reach the
+    # port could resolve a ticket as anybody and the `ticket_status_history` audit
+    # trail would record the impersonation as fact. Taking the id from the credential
+    # makes the trail mean something.
+    #
+    # An EMPTY map denies every advisor and admin route — fail closed. A missing
+    # credential set must not read as "no authentication required", which is how
+    # most of these get shipped open.
+    #
+    # .env.example ships an obvious development key so a fresh clone can still demo
+    # the escalation loop. Rotate it for anything real; it is in a public repo.
+    ADVISOR_API_KEYS: dict[str, str] = {}
+
+    #: Header the key arrives in.
+    ADVISOR_API_KEY_HEADER: str = "X-API-Key"
 
     # --- guardrails (PII) ---
     # On by default, and that is the point: a redactor you have to remember to turn

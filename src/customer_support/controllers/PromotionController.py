@@ -28,7 +28,10 @@ from pydantic import ValidationError
 from customer_support.helpers.logging_config import get_logger
 from customer_support.models.db_schemas import RetrievedDocument
 from customer_support.models.llm_schemas.gate_result import JudgeVerdict
-from customer_support.models.llm_schemas.promotion import PromotionAssessment
+from customer_support.models.llm_schemas.promotion import (
+    ContradictionVerdict,
+    PromotionAssessment,
+)
 from customer_support.stores.llm.templates import JUDGE_LANGUAGE, TemplateParser, format_excerpts
 from customer_support.stores.llm.templates.promotion import (
     CONTRADICTION_TEMPLATE,
@@ -117,6 +120,55 @@ class PromotionController(BaseController):
             compared_against=len(handbook_excerpts),
         )
         return assessment
+
+    async def check_contradiction(
+        self, question: str, answer: str, department: str | None = None
+    ) -> ContradictionVerdict:
+        """Only the veto. One judge call, for the path that only reads the veto.
+
+        `resolve()` reads exactly three things off a full assessment — `held`,
+        `hold_reason()` and `contradiction_score` — all of which come from the
+        contradiction judge. It was calling `assess()`, which runs the
+        generalizability judge too and discards the result: a wasted judge call on
+        every promoted resolve, on the path the rate limits exist for, using the
+        client that was right-sized specifically because judges are the busiest
+        caller.
+
+        A separate method rather than `assess(generalizability=False)` because the
+        flag version would have to put *something* in
+        `PromotionAssessment.generalizable`, and the only options are a lie or a
+        null on a non-optional field. The two callers are asking two different
+        questions: the endpoint asks "what should the checkbox say", resolve asks
+        "may this be promoted at all".
+        """
+        handbook_excerpts = await self._handbook_context(
+            question=question, answer=answer, department=department
+        )
+
+        verdict = await self._judge(
+            name="contradiction",
+            prompt=CONTRADICTION_TEMPLATE.substitute(
+                answer=answer,
+                chunks=self._render(handbook_excerpts) or "(no handbook excerpts found)",
+            ),
+            # Fail SAFE, and here safe means "do not hold" — identical to assess().
+            # A hold is a veto a human must clear, so manufacturing one from a broken
+            # judge would block real answers during an outage.
+            fallback=JudgeVerdict(
+                score=0.0, reason="Contradiction could not be assessed automatically."
+            ),
+        )
+
+        held = verdict.score >= self.app_settings.PROMOTION_CONTRADICTION_THRESHOLD
+        self.logger.info(
+            "promotion_contradiction_checked",
+            held=held,
+            contradiction_score=round(verdict.score, 3),
+            compared_against=len(handbook_excerpts),
+        )
+        return ContradictionVerdict(
+            held=held, score=verdict.score, reason=verdict.reason if held else None
+        )
 
     # -------------------------------------------------------------- internals
 

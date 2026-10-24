@@ -123,6 +123,11 @@ def build(input_dir: Path, chunk_size: int, overlap: int, settings=None) -> tupl
                     "chunk_id": f"{source}::{section}::{part}",
                     "source": source,
                     "department": chunk.metadata.get("department"),
+                    # Carried through from _chunk_metadata rather than re-derived.
+                    # Retrieval ranks handbook chunks above promoted ticket answers
+                    # on this field, so dropping it here silently demotes the whole
+                    # corpus below the learning loop's output.
+                    "authority": chunk.metadata.get("authority"),
                     "section": section,
                     "part": part,
                     "text": chunk.page_content,
@@ -157,7 +162,7 @@ def build(input_dir: Path, chunk_size: int, overlap: int, settings=None) -> tupl
     return records, manifest
 
 
-def validate(records: list[dict]) -> list[str]:
+def validate(records: list[dict], expected_sources: set[str] | None = None) -> list[str]:
     """Check the corpus before anything embeds it. Returns a list of problems.
 
     Every check here is a bug that is silent at build time and expensive later: an
@@ -199,12 +204,24 @@ def validate(records: list[dict]) -> list[str]:
                 f"the overflow splitter did not run"
             )
 
-    # Every handbook that exists should have contributed. A file that produced no
-    # chunks is a parsing failure, and it is invisible in a total record count.
-    contributed = {record["source"] for record in records}
-    for handbook in HANDBOOK_DEPARTMENTS:
-        if handbook not in contributed:
-            problems.append(f"{handbook}: contributed no chunks at all")
+    # Every handbook PRESENT IN THIS RUN'S INPUT should have contributed. A file that
+    # produced no chunks is a parsing failure, and it is invisible in a total count.
+    #
+    # Scoped to the input rather than to the whole known-sources map, which is the
+    # correction: once the map covers more than one input set — the real handbooks
+    # and the committed samples — "every known source must contribute" fails every
+    # run by construction, because no single run has both.
+    #
+    # `None` SKIPS this check rather than falling back to the whole map, and that is
+    # the honest semantics: every other rule here is a per-record invariant the
+    # records can answer for themselves, while completeness needs outside knowledge
+    # of what was supposed to be present. A source that contributed nothing is, by
+    # definition, not in the records.
+    if expected_sources:
+        contributed = {record["source"] for record in records}
+        for handbook in sorted(expected_sources):
+            if handbook not in contributed:
+                problems.append(f"{handbook}: contributed no chunks at all")
 
     return problems
 
@@ -230,7 +247,16 @@ def main() -> int:
     args = parser.parse_args()
 
     records, manifest = build(args.input_dir, args.chunk_size, args.overlap)
-    problems = validate(records)
+    # Only the sources THIS RUN read, taken from the manifest's own file list. The
+    # old check asked whether every source in the global map had contributed, which
+    # fails by construction now that the map spans two input sets — the real
+    # handbooks and the committed samples — and no single run reads both.
+    expected = {
+        source
+        for source in HANDBOOK_DEPARTMENTS
+        if any(source.lower() in name.lower() for name in manifest["source_files"])
+    }
+    problems = validate(records, expected_sources=expected)
     manifest["valid"] = not problems
 
     corpus_path = args.output_dir / "corpus.json"
@@ -255,7 +281,14 @@ def main() -> int:
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
 
-    print(f"wrote {corpus_path.relative_to(REPO_ROOT)}")
+    # relative_to raises for a path outside the repo, and --output-dir is a
+    # documented flag — so writing to /tmp succeeded and then crashed on the
+    # success message. Shorten when it is inside the repo, print as given otherwise.
+    try:
+        shown = corpus_path.relative_to(REPO_ROOT)
+    except ValueError:
+        shown = corpus_path
+    print(f"wrote {shown}")
     print(f"  records   {manifest['records']} across {manifest['sections']} sections")
     print(f"  by source {manifest['by_source']}")
     print(f"  chars     {manifest['char_count_total']} total, {manifest['char_count_max']} max")

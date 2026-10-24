@@ -1,6 +1,7 @@
 """Chat endpoints. HTTP only: no queries, no prompts, no lifecycle rules."""
 
 import uuid
+from collections.abc import Mapping
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request, status
@@ -15,6 +16,25 @@ from customer_support.routers.schemas.chat import ChatRequest, ChatResponse
 from customer_support.utils.metrics import record_question
 
 logger = get_logger(__name__)
+
+
+def was_escalated(state: Mapping[str, object] | None) -> bool:
+    """Did this turn go to a human? One definition, both endpoints.
+
+    Reads the gates' own verdict, NOT the presence of a ticket id. `grade_node`
+    writes `escalate` on every run, so the value is self-healing even if a future
+    field is added without being reset by the router — whereas an id that is only
+    ever written on the escalate path is not.
+
+    It existed in one place and was re-derived differently in the other: POST used
+    `escalate`, GET used `bool(ticket_id)`. They agree today and stop agreeing the
+    moment a path sets `escalate` without writing a ticket — which is exactly what
+    happens if `create_ticket` raises after the gates have already failed. The run
+    then 503s with `escalate=True` persisted and no ticket, and the two endpoints
+    disagree about what happened to the same thread.
+    """
+    return bool((state or {}).get("escalate"))
+
 
 chat_router = APIRouter(prefix="/api/v1/chat", tags=["Chat"])
 
@@ -69,22 +89,17 @@ async def chat(
         question=payload.question,
     )
 
-    # One trace per question, keyed on thread_id — the same identifier as the
-    # structlog correlation id, so a trace and its log lines are joinable without
-    # guessing from timestamps. A no-op when the Langfuse keys are unset.
-    trace = start_trace(
-        thread_id=thread_id,
-        question=payload.question,
-        student_id=payload.student_id,
-        language=language,
-        department=payload.department,
-    )
-    set_current_trace(trace)
-
     # The stored profile WINS over the request body. Department drives which handbook
     # is searched, so letting a client assert it means a CS student can read the IS
     # handbook by claiming to be in IS. The body is a fallback for a student we have
     # never seen, whose department this turn's extraction may then learn.
+    #
+    # Resolved HERE, above everything that records it. It used to sit below
+    # start_trace, so the trace and the Prometheus counter both recorded
+    # `payload.department` — the department the system had just *rejected* — while
+    # retrieval used this one. A returning student with a stored profile and no
+    # department in the body was answered from their real handbook and counted under
+    # "none", which is most traffic once memory has learned a few profiles.
     department = profile.department or payload.department
     if profile.department and payload.department and profile.department != payload.department:
         logger.warning(
@@ -93,6 +108,23 @@ async def chat(
             claimed=payload.department,
             stored=profile.department,
         )
+
+    # One trace per question, keyed on thread_id — the same identifier as the
+    # structlog correlation id, so a trace and its log lines are joinable without
+    # guessing from timestamps. A no-op when the Langfuse keys are unset.
+    trace = start_trace(
+        thread_id=thread_id,
+        question=payload.question,
+        student_id=payload.student_id,
+        language=language,
+        # The EFFECTIVE department — what was actually searched.
+        department=department,
+        # And what the client asked for, when the two differ. Safe here because
+        # trace metadata is free-form; it must NOT become a metric label, where a
+        # second department dimension would multiply the time series.
+        claimed_department=(payload.department if payload.department != department else None),
+    )
+    set_current_trace(trace)
 
     graph = request.app.state.graph
     config = {"configurable": {"thread_id": thread_id}}
@@ -130,11 +162,7 @@ async def chat(
             detail="The assistant is temporarily unavailable. Please try again.",
         ) from None
 
-    # Read the gates' own verdict, not the presence of a ticket id. grade_node writes
-    # `escalate` on EVERY run, so this value is self-healing even if a future field
-    # is added without being reset above — whereas an id that is only ever written on
-    # the escalate path is not.
-    escalated = bool(final_state.get("escalate"))
+    escalated = was_escalated(final_state)
 
     # The one place every question's outcome is known. Recorded here rather than in a
     # node because a run can leave the graph by more than one path, and an escalation
@@ -170,7 +198,9 @@ async def chat(
     record_question(
         outcome="escalated" if escalated else "answered",
         failed_gate=final_state.get("failed_gate"),
-        department=payload.department,
+        # The effective department, so the series describes which handbook was
+        # actually used rather than which one the caller claimed.
+        department=department,
     )
 
     # Off the critical path: BackgroundTasks runs after the response is sent, so
@@ -216,7 +246,9 @@ async def get_conversation(request: Request, thread_id: str) -> dict:
         "messages": [message.model_dump(mode="json") for message in messages],
         "question": snapshot.values.get("question"),
         "answer": snapshot.values.get("answer"),
-        "escalated": bool(snapshot.values.get("ticket_id")),
+        # The same function POST uses, so the two endpoints cannot drift into
+        # disagreeing about whether a given thread was escalated.
+        "escalated": was_escalated(snapshot.values),
         "ticket_id": snapshot.values.get("ticket_id"),
         # Set only once an advisor has resolved the ticket, which is what tells the
         # student the answer they are reading is a human's and not the placeholder.

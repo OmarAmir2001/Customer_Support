@@ -9,11 +9,24 @@ memory existed and actively misleading now: a debugging endpoint that always ans
 
 from fastapi import APIRouter, HTTPException, Request, status
 
+from customer_support.helpers.auth import RequireAdvisor
 from customer_support.helpers.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-profile_router = APIRouter(prefix="/api/v1/profile", tags=["Profile Routes"])
+profile_router = APIRouter(
+    prefix="/api/v1/profile",
+    tags=["Profile Routes"],
+    # Gated for the same reason as the others: `GET /api/v1/profile/{student_id}`
+    # returns a named student's department and GPA, and DELETE wipes their memory.
+    # `student_id` is a path parameter, so without a credential any caller could read
+    # or erase any student's profile by guessing an id.
+    #
+    # This is an operator gate, not student authentication. A student reading their
+    # OWN profile needs a student identity, which this system does not have — see
+    # docs/perspectives/01-security.md.
+    dependencies=[RequireAdvisor],
+)
 
 
 @profile_router.get("/{student_id}")

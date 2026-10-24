@@ -22,12 +22,19 @@ class FakeEmbedding:
 
 
 class FakeVectorDB:
-    """Returns rows in similarity order, as a real vector store does."""
+    """Returns rows in similarity order, as a real vector store does.
+
+    Records the `department` it was asked to filter on, because that is now part of
+    the query rather than something the caller strips afterwards — and a provider
+    that accepted the argument without applying it would be invisible otherwise.
+    """
 
     def __init__(self, rows):
         self.rows = rows
+        self.asked_for_department = "<not called>"
 
-    async def search_by_vector(self, collection_name, vector, limit):
+    async def search_by_vector(self, collection_name, vector, limit, department=None):
+        self.asked_for_department = department
         return self.rows[:limit]
 
 
@@ -119,3 +126,71 @@ async def test_empty_retrieval_returns_a_list_not_false():
 async def test_blank_question_fails_loudly():
     with pytest.raises(ValueError):
         await controller([doc("CS_2023", 0.9)]).retrieve(question="   ", department="CS")
+
+
+# ------------------------------------------- the filter belongs in the query
+
+
+@pytest.mark.asyncio
+async def test_the_department_filter_reaches_the_query():
+    """Filtering after the search cannot recover rows the search never returned.
+
+    The CS and IS handbooks share most of their regulation text, so a CS student's
+    nearest 15 rows could be mostly IS duplicates — leaving fewer than top_k usable
+    chunks, or none, and escalating a question the CS handbook answers. Over-fetching
+    3× made that unlikely rather than impossible.
+    """
+    vectordb = FakeVectorDB([doc("CS_2023", 0.9)])
+    controller = RetrievalController(
+        vectordb_client=vectordb,
+        embedding_client=FakeEmbedding(),
+        collection_name="collection_3",
+        settings=FakeSettings(),
+    )
+
+    await controller.retrieve(question="how many hours?", department="CS", limit=5)
+
+    assert vectordb.asked_for_department == "CS", (
+        "the department was filtered in Python instead of in the query"
+    )
+
+
+@pytest.mark.asyncio
+async def test_no_department_means_no_filter_rather_than_an_empty_one():
+    """A question with no department must search everything.
+
+    Passing a falsy department as a filter value would match only rows whose
+    department is literally empty — i.e. almost nothing.
+    """
+    vectordb = FakeVectorDB([doc("CS_2023", 0.9)])
+    controller = RetrievalController(
+        vectordb_client=vectordb,
+        embedding_client=FakeEmbedding(),
+        collection_name="collection_3",
+        settings=FakeSettings(),
+    )
+
+    await controller.retrieve(question="q", department=None, limit=5)
+
+    assert vectordb.asked_for_department is None
+
+
+@pytest.mark.asyncio
+async def test_over_fetching_is_kept_so_precedence_still_has_rows_to_reorder():
+    """The filter moving into SQL does not remove the need to over-fetch.
+
+    Precedence re-ranking reorders, and the cut to `limit` still happens on
+    similarity order afterwards.
+    """
+    rows = [doc("CS_2023", 0.9) for _ in range(20)]
+    vectordb = FakeVectorDB(rows)
+    controller = RetrievalController(
+        vectordb_client=vectordb,
+        embedding_client=FakeEmbedding(),
+        collection_name="collection_3",
+        settings=FakeSettings(),
+    )
+
+    chunks = await controller.retrieve(question="q", department="CS", limit=5)
+
+    assert len(chunks) == 5, "the cut to limit must still happen after ranking"

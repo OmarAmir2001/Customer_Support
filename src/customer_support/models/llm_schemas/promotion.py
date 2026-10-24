@@ -45,3 +45,20 @@ class PromotionAssessment(BaseModel):
 
     def hold_reason(self) -> str | None:
         return self.contradiction_reason if self.held else None
+
+
+class ContradictionVerdict(BaseModel):
+    """Just the veto, for the path that only needs the veto.
+
+    Deliberately NOT a PromotionAssessment with the generalizability fields left
+    empty: those fields are non-optional, so filling them would mean inventing a
+    verdict no judge gave. A caller that only asks "may this be promoted" gets a
+    type that can only answer that.
+    """
+
+    #: True when a contradiction blocks promotion regardless of the advisor's box.
+    held: bool
+    score: float = Field(ge=0.0, le=1.0)
+    #: The judge's wording, and only when it actually holds — mirrors
+    #: PromotionAssessment.hold_reason(), which returns None when nothing is held.
+    reason: str | None = None

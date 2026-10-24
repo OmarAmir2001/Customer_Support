@@ -81,6 +81,11 @@ class FakeSettings:
     and fail in CI, which is exactly backwards from what a unit test should do."""
 
     ASSETS_DIR = "assets"
+    # F4: the controller now redacts PII from the two DERIVED copies of an advisor's
+    # answer (the thread the student reads, the vector the KB retrieves). Declared
+    # here rather than defaulted in the controller — a test that does not say which
+    # settings it needs is what conftest.py exists to prevent.
+    PII_REDACTION_ENABLED = True
 
 
 def controller(ticket):

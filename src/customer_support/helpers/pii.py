@@ -137,19 +137,36 @@ class _Match:
 
 
 def _find(text: str) -> list[_Match]:
-    """Every confirmed match, non-overlapping, left to right.
+    """Every confirmed match, non-overlapping, left to right. **Never raises.**
 
     Overlaps are resolved by detector priority first and length second, so a
     national ID is never reported as a shorter phone number sitting inside it.
+
+    The defensive guard lives HERE rather than in each public function. It used to sit
+    only in `redact()`, so the module stated a never-raises contract in its docstring
+    and then honoured it at one of three doors: `contains_pii` and `redact_fields`
+    called this bare. `redact_fields` is the one that mattered — it runs from
+    `MemoryController.remember` inside a BackgroundTask, so a failure there would
+    leave the profile silently un-updated and send the traceback wherever Starlette
+    puts background-task exceptions rather than through structlog.
+
+    Making it a property of the detector means a new caller cannot forget it, which
+    is the difference between a contract and a convention.
     """
     candidates: list[tuple[int, int, int, str]] = []
-    for priority, detector in enumerate(_DETECTORS):
-        for match in detector.pattern.finditer(text):
-            if detector.confirm is not None and not detector.confirm(match.group()):
-                continue
-            candidates.append(
-                (priority, -(match.end() - match.start()), match.start(), detector.kind)
-            )
+    try:
+        for priority, detector in enumerate(_DETECTORS):
+            for match in detector.pattern.finditer(text):
+                if detector.confirm is not None and not detector.confirm(match.group()):
+                    continue
+                candidates.append(
+                    (priority, -(match.end() - match.start()), match.start(), detector.kind)
+                )
+    except Exception:  # pragma: no cover - defensive; see the docstring
+        # Finding nothing is the safe direction for every caller: redact() returns the
+        # input unchanged, contains_pii() says "no", and redact_fields() keeps the
+        # field. None of those is worse than the exception they replace.
+        return []
 
     # Sort by priority, then by longest, then by position; claim spans greedily.
     taken: list[_Match] = []
@@ -186,6 +203,9 @@ def redact(text: str | None) -> tuple[str | None, Counter]:
             return text, Counter()
         return _apply(text, matches)
     except Exception:  # pragma: no cover - defensive
+        # Kept even though _find is now guarded itself: _apply does the string
+        # surgery, and this is the one caller whose failure would turn a good answer
+        # into an error.
         return text, Counter()
 
 

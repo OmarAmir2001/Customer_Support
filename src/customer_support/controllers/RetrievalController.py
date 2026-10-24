@@ -16,7 +16,21 @@ from customer_support.utils.metrics import record_query_drift
 
 from .BaseController import BaseController
 
-HANDBOOK_SOURCES = ("CS_2023", "IS_2023")
+#: Legacy prefix list, kept ONLY to rank rows indexed before chunks carried an
+#: `authority` field. New ingestion stamps `authority: "handbook"` instead.
+#:
+#: This tuple was the bug: precedence matched `source.startswith(...)` against it, so
+#: a CS_2025 handbook would fall through to rank 2 — BELOW instructor_resolved —
+#: silently inverting the rule that the handbook always outranks a promoted ticket
+#: answer. Nothing would error; the learning loop would just quietly start overruling
+#: the regulations.
+#:
+#: Removing it outright is not safe yet: an existing collection holds handbook rows
+#: with no `authority` key, and ranking purely on that field would demote every one
+#: of them on the next request — causing the exact bug this change prevents. The
+#: fallback goes away after a full re-index.
+LEGACY_HANDBOOK_PREFIXES = ("CS_2023", "IS_2023", "CS_SAMPLE", "IS_SAMPLE")
+HANDBOOK_AUTHORITY = "handbook"
 INSTRUCTOR_RESOLVED_SOURCE = "instructor_resolved"
 
 
@@ -62,17 +76,36 @@ class RetrievalController(BaseController):
 
         self._record_drift(vectors[0])
 
-        # Over-fetch, because department filtering and precedence re-ranking both
-        # discard rows. Fetching exactly `limit` would leave gaps after filtering.
+        # The department filter now runs IN the query, not after it.
+        #
+        # It used to over-fetch limit × 3 and discard the wrong department in Python,
+        # which cannot recover rows the search never returned: the CS and IS
+        # handbooks share most of their regulation text, so a CS student's nearest 15
+        # rows could be mostly IS duplicates, leaving fewer than `limit` usable
+        # chunks — or none — and escalating a question the CS handbook answers.
+        #
+        # Measured before changing it: 0 of 62 evaluation questions ended up with
+        # fewer than top_k chunks, so this was not firing at the current corpus size.
+        # The fix is still right, because now the limit fills by construction rather
+        # than by the over-fetch factor happening to be generous enough, and that
+        # margin only shrinks as handbooks are added.
+        #
+        # Over-fetch is KEPT: precedence re-ranking still reorders, and the cut to
+        # `limit` below still happens on similarity.
         raw = await self.vectordb_client.search_by_vector(
             collection_name=self.collection_name,
             vector=vectors[0],
             limit=limit * self.app_settings.RETRIEVAL_OVERFETCH_FACTOR,
+            department=department,
         )
         if not raw:
             self.logger.info("retrieval_empty", department=department)
             return []
 
+        # Redundant for any provider that honoured `department` above, and kept
+        # anyway: it is a few microseconds, it is the backstop if a provider ever
+        # accepts the argument without applying it, and it is still load-bearing for
+        # rows whose department is absent from a provider's payload index.
         filtered = self._filter_by_department(raw, department)
 
         # Relevance decides WHICH chunks are used; precedence decides the ORDER they are
@@ -147,11 +180,23 @@ class RetrievalController(BaseController):
         its similarity order. Stable sort, so scores still decide within a group."""
 
         def rank(doc: RetrievedDocument) -> int:
-            source = (doc.metadata or {}).get("source", "")
-            if any(source.startswith(h) for h in HANDBOOK_SOURCES):
+            meta = doc.metadata or {}
+
+            # Preferred: the chunk says what it is. Set at ingest, so a handbook
+            # published under any future name ranks correctly without a code change.
+            if meta.get("authority") == HANDBOOK_AUTHORITY:
                 return 0
+
+            source = meta.get("source") or ""
             if source == INSTRUCTOR_RESOLVED_SOURCE:
                 return 1
+
+            # Fallback for rows indexed before `authority` existed. See the note on
+            # LEGACY_HANDBOOK_PREFIXES — without this, every already-indexed handbook
+            # chunk would demote below promoted ticket answers on the next request.
+            if any(source.startswith(prefix) for prefix in LEGACY_HANDBOOK_PREFIXES):
+                return 0
+
             return 2
 
         return sorted(documents, key=rank)

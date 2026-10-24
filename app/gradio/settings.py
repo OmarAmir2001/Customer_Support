@@ -45,10 +45,12 @@ class Settings:
     langfuse_url: str = _env("UI_LANGFUSE_URL", "http://127.0.0.1:3002")
     mlflow_url: str = _env("UI_MLFLOW_URL", "http://127.0.0.1:5000")
 
-    #: Shown as the default advisor in the queue tab. A real deployment would take
-    #: this from an authenticated session; there is no auth here, and the README
-    #: says so rather than implying otherwise.
-    default_advisor_id: str = _env("UI_ADVISOR_ID", "advisor_demo")
+    #: The advisor API key this console authenticates with.
+    #:
+    #: The advisor routes now require it, and the KEY identifies the actor — so the
+    #: console no longer sends an advisor id at all. The "Acting as" box is gone with
+    #: it: who you are is a property of the credential, not a text field.
+    advisor_api_key: str = _env("UI_ADVISOR_API_KEY", "dev-advisor-key-not-a-secret")
     default_student_id: str = _env("UI_STUDENT_ID", "student_demo")
 
 

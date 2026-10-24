@@ -62,6 +62,17 @@ migrate:  ## apply migrations on the HOST (the container does this on boot too)
 up-ui:  ## start the stack INCLUDING the Gradio console in Docker
 	$(COMPOSE) --profile ui up -d --build
 
+demo-kb:  ## load the committed SAMPLE handbooks into the knowledge base (needs the stack up)
+	@echo "Building a corpus from data/handbooks_sample/ (free, no model calls)..."
+	uv run --extra dev python scripts/build_corpus.py --input-dir data/handbooks_sample
+	@echo ""
+	@echo "Embedding and indexing it (COSTS a few embedding calls)..."
+	uv run --extra dev python scripts/index_corpus.py
+	@echo ""
+	@echo "Done. Ask it something:"
+	@echo '  curl -s localhost:8000/ask -H "Content-Type: application/json" \'
+	@echo '    -d {"question":"كم عدد الساعات المعتمدة المطلوبة للتخرج؟","student_id":"demo","department":"CS"} | jq'
+
 ui:  ## start the Gradio operator console on the host (needs the API up)
 	@echo "Gradio console -> http://127.0.0.1:7860   (API: $${UI_API_BASE_URL:-http://127.0.0.1:8000})"
 	uv run --extra ui python app/gradio/main.py

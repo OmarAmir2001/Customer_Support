@@ -40,6 +40,8 @@ class CohereProvider(LLMInterface):
 
         self.client = cohere.Client(api_key=self.api_key)
 
+        #: Usage from the most recent SDK call, or None. See _record_usage.
+        self.last_usage: dict | None = None
         self.logger = get_logger(__name__)
 
     def set_generation_model(self, model_id: str):
@@ -82,6 +84,14 @@ class CohereProvider(LLMInterface):
             units = getattr(meta, "billed_units", None) or getattr(meta, "tokens", None)
             if units is None:
                 return
+            # Kept on the instance as well as counted, so a caller that wants per-call
+            # usage — the eval tracer attaching token counts to a Langfuse generation —
+            # can read it without a second API round trip or a signature change on
+            # every method between here and there.
+            self.last_usage = {
+                "input": getattr(units, "input_tokens", None),
+                "output": getattr(units, "output_tokens", None),
+            }
             record_tokens(
                 model,
                 getattr(units, "input_tokens", None),

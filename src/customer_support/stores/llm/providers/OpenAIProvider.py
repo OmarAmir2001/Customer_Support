@@ -41,6 +41,8 @@ class OpenAIProvider(LLMInterface):
         self.embedding_size = None
 
         self.client = OpenAI(api_key=self.api_key, base_url=self.api_url)
+        #: Usage from the most recent SDK call, or None. See _record_usage.
+        self.last_usage: dict | None = None
         self.logger = get_logger(__name__)
 
     def set_generation_model(self, model_id: str):
@@ -84,6 +86,14 @@ class OpenAIProvider(LLMInterface):
             usage = getattr(response, "usage", None)
             if usage is None:
                 return
+            # Kept on the instance as well as counted, so a caller that wants per-call
+            # usage — the eval tracer attaching token counts to a Langfuse generation —
+            # can read it without a second API round trip or a signature change on
+            # every method between here and there.
+            self.last_usage = {
+                "input": getattr(usage, "prompt_tokens", None),
+                "output": getattr(usage, "completion_tokens", None),
+            }
             record_tokens(
                 model,
                 getattr(usage, "prompt_tokens", None),

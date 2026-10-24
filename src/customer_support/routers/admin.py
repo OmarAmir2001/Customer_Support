@@ -14,6 +14,7 @@ from customer_support.controllers import (
     RetrievalController,
 )
 from customer_support.helpers import Settings, get_settings
+from customer_support.helpers.auth import RequireAdvisor
 from customer_support.helpers.logging_config import get_logger
 from customer_support.models import ResponseSignal
 from customer_support.models.AssetModel import AssetModel
@@ -30,6 +31,11 @@ logger = get_logger(__name__)
 admin_router = APIRouter(
     prefix="/api/v1/admin",  # Prefix for all routes in this router
     tags=["Admin Routes"],  # Tag for documentation purposes
+    # Same gate as the escalation router. These routes upload files, chunk them,
+    # embed them and write into the collection the agent answers from — so an
+    # unauthenticated caller could put arbitrary text into what students are told,
+    # or drop the collection with do_reset.
+    dependencies=[RequireAdvisor],
 )
 
 

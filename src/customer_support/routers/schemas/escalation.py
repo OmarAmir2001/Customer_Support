@@ -30,12 +30,18 @@ class TicketDetail(TicketSummary):
     promotion_hold_reason: str | None = None
 
 
-class ClaimRequest(BaseModel):
-    advisor_id: str = Field(min_length=1, max_length=64)
+#: `advisor_id` is GONE from every request body below, and that is the fix.
+#:
+#: It used to be a field, so the actor was whatever the caller typed — anyone who
+#: could reach the port could resolve a ticket as anybody, and
+#: `ticket_status_history` would record the impersonation as fact. The actor now comes
+#: from the API key that authenticated the request (`helpers/auth.py`), which is the
+#: only way the audit trail means anything.
+#:
+#: Claim needs no body at all now: the actor was the only thing in it.
 
 
 class ResolveRequest(BaseModel):
-    advisor_id: str = Field(min_length=1, max_length=64)
     advisor_answer: str = Field(min_length=10, max_length=5000)
     # Section 5: resolving always delivers; promoting is a separate decision the
     # advisor makes. The generalizability judge only pre-fills this box.
@@ -45,14 +51,12 @@ class ResolveRequest(BaseModel):
 class ReleaseRequest(BaseModel):
     """Hand a claimed ticket back to the queue."""
 
-    advisor_id: str = Field(min_length=1, max_length=64)
     note: str | None = Field(default=None, max_length=1000)
 
 
 class RejectRequest(BaseModel):
     """Refuse a question outright."""
 
-    advisor_id: str = Field(min_length=1, max_length=64)
     # Required, unlike the other notes. The status history is the only place this
     # decision is recorded, and a rejection with no reason is unreviewable later.
     reason: str = Field(min_length=3, max_length=1000)
@@ -61,18 +65,19 @@ class RejectRequest(BaseModel):
 class CloseRequest(BaseModel):
     """Finish a resolved ticket. The promoted answer stays in the knowledge base."""
 
-    advisor_id: str = Field(min_length=1, max_length=64)
     note: str | None = Field(default=None, max_length=1000)
 
 
 class ReopenRequest(BaseModel):
     """Send a finished ticket back for another look.
 
-    ``actor`` rather than ``advisor_id``: a reopen is the one lifecycle move a student
-    can trigger ("this did not answer my question"), so the field has to carry either.
+    This used to carry `actor` rather than `advisor_id`, because a reopen is the one
+    lifecycle move a student could in principle trigger. That path does not exist:
+    there is no student authentication, so a student-initiated reopen would be an
+    unauthenticated write to someone else's ticket. The actor comes from the advisor
+    key like every other move, and a student-facing reopen needs student auth first.
     """
 
-    actor: str = Field(min_length=1, max_length=64)
     note: str | None = Field(default=None, max_length=1000)
 
 

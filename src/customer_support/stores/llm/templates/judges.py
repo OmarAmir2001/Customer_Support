@@ -20,6 +20,10 @@ where "rate your confidence" is not.
 
 from string import Template
 
+from customer_support.helpers.logging_config import get_logger
+
+logger = get_logger(__name__)
+
 VERSION = "judges/v3"
 
 JUDGE_SYSTEM_PROMPT = Template(
@@ -51,8 +55,37 @@ REASON_LANGUAGE_NAMES = {"en": "English", "ar": "Arabic"}
 
 
 def judge_system_prompt(language: str | None) -> str:
-    """The judge system message, with the reason language pinned to the locale."""
-    name = REASON_LANGUAGE_NAMES.get((language or "").lower(), "English")
+    """The judge system message, with the reason language pinned to the locale.
+
+    An unmapped locale falls back to English and **says so**, which is the same
+    pattern `escalate_node` uses for a missing template.
+
+    The reason it needs saying: supported languages are DISCOVERED from the
+    filesystem (`TemplateParser._discover_languages`), while this mapping is written
+    by hand. Drop a `locales/fr/` directory in and French is immediately supported —
+    negotiate_language accepts it, the prompts render, the student gets a French
+    answer — and the judge's `reason` silently reverts to English. That string is not
+    internal: it becomes `escalation_reason` in the response the student reads and
+    `gate_reason` on the ticket the advisor reads. So a French student would get a
+    French holding message with an English explanation of why, which is the same leak
+    class as the two this project already fixed, one level up.
+
+    tests/test_locale_parity.py now fails if a locale exists with no mapping, so the
+    warning below is a backstop rather than the only defence.
+    """
+    code = (language or "").lower()
+    name = REASON_LANGUAGE_NAMES.get(code)
+    if name is None:
+        logger.warning(
+            "judge_reason_language_unmapped",
+            language=code or None,
+            falling_back_to="English",
+            detail=(
+                "add it to REASON_LANGUAGE_NAMES; the student will otherwise read an "
+                "escalation reason in the wrong language"
+            ),
+        )
+        name = "English"
     return JUDGE_SYSTEM_PROMPT.substitute(reason_language=name)
 
 
