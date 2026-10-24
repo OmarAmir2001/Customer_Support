@@ -21,12 +21,16 @@ from customer_support.stores.vectordb.VectorDBEnum import (
 
 
 class FakeResult:
-    def __init__(self, row=None, scalar=0):
+    def __init__(self, row=None, scalar=0, rows=None):
         self._row = row
         self._scalar = scalar
+        self._rows = rows or []
 
     def fetchone(self):
         return self._row
+
+    def fetchall(self):
+        return self._rows
 
     def scalar_one(self):
         return self._scalar
@@ -230,3 +234,46 @@ def test_cosine_remains_the_default_and_is_unchanged():
     assert instance.index_opclass == PgVectorDistanceMethodEnums.COSINE.value
     assert instance.distance_operator == "<=>"
     assert instance.score_expression == "1 - ({column} <=> :vector)"
+
+
+# --------------------------------------------- the department filter in SQL
+
+
+@pytest.mark.asyncio
+async def test_the_department_filter_is_in_the_sql_and_bound_not_interpolated():
+    """Pushed into the query, and the VALUE is a bound parameter.
+
+    The collection name must be interpolated — SQL cannot bind an identifier — but a
+    department arrives in a request body, and a value is never trusted-by-source.
+    """
+    session = FakeSession(table_row=TABLE_ROW)
+    await provider(session).search_by_vector("collection_3", [0.1] * 384, limit=15, department="CS")
+
+    search = next(sql for sql in session.executed if "ORDER BY" in sql)
+    assert "->> 'department' = :department" in search
+    assert "IS NULL" in search, "shared content with no department must still reach everyone"
+    assert "'CS'" not in search, "the department was interpolated instead of bound"
+
+
+@pytest.mark.asyncio
+async def test_no_department_produces_no_where_clause():
+    """A missing department must search everything, not match the empty string."""
+    session = FakeSession(table_row=TABLE_ROW)
+    await provider(session).search_by_vector("collection_3", [0.1] * 384, limit=15)
+
+    search = next(sql for sql in session.executed if "ORDER BY" in sql)
+    assert "WHERE" not in search
+
+
+@pytest.mark.asyncio
+async def test_the_order_by_still_uses_the_distance_operator():
+    """Adding a WHERE must not break the one thing the HNSW index needs.
+
+    The planner only matches the operator form; ordering by the computed score reads
+    better and silently forces a full scan.
+    """
+    session = FakeSession(table_row=TABLE_ROW)
+    await provider(session).search_by_vector("collection_3", [0.1] * 384, limit=15, department="IS")
+
+    search = next(sql for sql in session.executed if "ORDER BY" in sql)
+    assert "ORDER BY vector <=> :vector ASC" in search

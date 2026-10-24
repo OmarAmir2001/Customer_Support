@@ -30,7 +30,7 @@ class FakeEmbedding:
 
 
 class FakeVectorDB:
-    async def search_by_vector(self, collection_name, vector, limit):
+    async def search_by_vector(self, collection_name, vector, limit, department=None):
         return [
             RetrievedDocument(
                 text="t", score=0.9, metadata={"source": "CS_2023", "department": "CS"}

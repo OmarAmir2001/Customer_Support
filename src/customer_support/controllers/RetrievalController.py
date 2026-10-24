@@ -76,17 +76,36 @@ class RetrievalController(BaseController):
 
         self._record_drift(vectors[0])
 
-        # Over-fetch, because department filtering and precedence re-ranking both
-        # discard rows. Fetching exactly `limit` would leave gaps after filtering.
+        # The department filter now runs IN the query, not after it.
+        #
+        # It used to over-fetch limit × 3 and discard the wrong department in Python,
+        # which cannot recover rows the search never returned: the CS and IS
+        # handbooks share most of their regulation text, so a CS student's nearest 15
+        # rows could be mostly IS duplicates, leaving fewer than `limit` usable
+        # chunks — or none — and escalating a question the CS handbook answers.
+        #
+        # Measured before changing it: 0 of 62 evaluation questions ended up with
+        # fewer than top_k chunks, so this was not firing at the current corpus size.
+        # The fix is still right, because now the limit fills by construction rather
+        # than by the over-fetch factor happening to be generous enough, and that
+        # margin only shrinks as handbooks are added.
+        #
+        # Over-fetch is KEPT: precedence re-ranking still reorders, and the cut to
+        # `limit` below still happens on similarity.
         raw = await self.vectordb_client.search_by_vector(
             collection_name=self.collection_name,
             vector=vectors[0],
             limit=limit * self.app_settings.RETRIEVAL_OVERFETCH_FACTOR,
+            department=department,
         )
         if not raw:
             self.logger.info("retrieval_empty", department=department)
             return []
 
+        # Redundant for any provider that honoured `department` above, and kept
+        # anyway: it is a few microseconds, it is the backstop if a provider ever
+        # accepts the argument without applying it, and it is still load-bearing for
+        # rows whose department is absent from a provider's payload index.
         filtered = self._filter_by_department(raw, department)
 
         # Relevance decides WHICH chunks are used; precedence decides the ORDER they are

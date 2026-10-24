@@ -483,7 +483,41 @@ class PgVectorProvider(VectorDBInterface):
                 result = await session.execute(delete_sql, params)
                 return result.rowcount
 
-    async def search_by_vector(self, collection_name: str, vector: list, limit: int):
+    async def search_by_vector(
+        self,
+        collection_name: str,
+        vector: list,
+        limit: int,
+        department: str | None = None,
+    ):
+        """Nearest rows, optionally restricted to one department IN THE QUERY.
+
+        `department` pushes the filter into SQL instead of leaving it to the caller.
+        Before this, retrieval over-fetched `limit × 3` rows and discarded the wrong
+        department in Python — so a CS student's nearest 15 rows could be mostly IS
+        duplicates (the two handbooks share most of their regulation text), leaving
+        fewer than `limit` usable chunks or none, and escalating a question the CS
+        handbook answers.
+
+        Measured before changing it: across the 62-question evaluation set, **0 of 62
+        questions** ended up with fewer than `top_k` chunks, so the starvation was not
+        firing at the current corpus size. The fix is still right — every one of the
+        fetched rows is now in-department, so the limit fills by construction rather
+        than by the over-fetch factor happening to be generous enough — and the margin
+        only erodes as handbooks are added.
+
+        `IS NULL` is included because shared content carries no department and must
+        reach everyone; that matches the Python filter this replaces.
+
+        **If a filtered query ever under-fills**, the lever is pgvector's
+        `hnsw.iterative_scan` (0.8+; the pinned image is 0.8.6), which keeps scanning
+        the index until the LIMIT is satisfied. It is deliberately NOT set here: it is
+        a GUC that does not exist on older pgvector, where setting it would abort the
+        transaction and break retrieval entirely — and the measurement above says it
+        is not needed yet. Prefer `strict_order` when you do set it, because the
+        caller cuts on similarity order and `relaxed_order` may return rows slightly
+        out of order.
+        """
         is_collection_existed = await self.is_collection_exists(collection_name=collection_name)
         if not is_collection_existed:
             self.logger.error("search_unknown_collection", collection=collection_name)
@@ -491,23 +525,37 @@ class PgVectorProvider(VectorDBInterface):
 
         vector = "[" + ",".join([str(v) for v in vector]) + "]"
         vector_column = PgVectorTableSchemeEnums.VECTOR.value
+        metadata_column = PgVectorTableSchemeEnums.METADATA.value
+
+        params: dict = {"vector": vector, "limit": limit}
+        where_clause = ""
+        if department:
+            # Bound, not interpolated — this one comes from a request body, unlike
+            # the collection name. See the module note on trusted-by-source
+            # identifiers: a value is never in that category.
+            where_clause = (
+                f" WHERE ({metadata_column} ->> 'department' = :department"
+                f" OR {metadata_column} ->> 'department' IS NULL)"
+            )
+            params["department"] = department
 
         async with self.db_client() as session:
             async with session.begin():
                 # metadata is SELECTed because RetrievedDocument requires it, and the
-                # department filter plus handbook-precedence ranking both read it.
+                # handbook-precedence ranking reads it.
                 # ORDER BY is on the distance operator ascending, not on a computed
                 # score descending: only the former can use the HNSW index.
                 search_sql = sql_text(
                     f"SELECT {PgVectorTableSchemeEnums.TEXT.value} as text, "
-                    f"{PgVectorTableSchemeEnums.METADATA.value} as metadata, "
+                    f"{metadata_column} as metadata, "
                     f"{self.score_expression.format(column=vector_column)} as score"
                     f" FROM {collection_name}"
+                    f"{where_clause}"
                     f" ORDER BY {vector_column} {self.distance_operator} :vector ASC "
                     "LIMIT :limit"
                 )
 
-                result = await session.execute(search_sql, {"vector": vector, "limit": limit})
+                result = await session.execute(search_sql, params)
 
                 records = result.fetchall()
 

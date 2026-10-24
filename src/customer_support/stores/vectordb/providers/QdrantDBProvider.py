@@ -186,11 +186,41 @@ class QdrantDBProvider(VectorDBInterface):
         self.client.delete(collection_name=collection_name, points_selector=selector)
         return matched
 
-    async def search_by_vector(self, collection_name: str, vector: list, limit: int = 10):
+    async def search_by_vector(
+        self,
+        collection_name: str,
+        vector: list,
+        limit: int = 10,
+        department: str | None = None,
+    ):
+        """Nearest points, with the department filter applied IN THE QUERY.
+
+        Implemented rather than accepted-and-ignored. An ignored filter here would be
+        the same class of bug as `dot` meaning Euclidean on one backend and inner
+        product on the other: the interface promises a behaviour, one provider
+        delivers it, and the mismatch is silent because both return plausible rows.
+
+        `should` is an OR: the requested department, or no department at all, which is
+        how shared content reaches everyone. It mirrors the pgvector
+        `= :department OR IS NULL` exactly.
+        """
+        query_filter = None
+        if department:
+            query_filter = models.Filter(
+                should=[
+                    models.FieldCondition(
+                        key="metadata.department",
+                        match=models.MatchValue(value=department),
+                    ),
+                    models.IsNullCondition(is_null=models.PayloadField(key="metadata.department")),
+                ]
+            )
+
         result = self.client.query_points(
             collection_name=collection_name,
             query=vector,
             limit=limit,
+            query_filter=query_filter,
         )
         if not result or len(result.points) == 0:
             return False

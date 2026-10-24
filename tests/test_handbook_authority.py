@@ -33,7 +33,7 @@ class FakeVectorDB:
     def __init__(self, rows):
         self.rows = rows
 
-    async def search_by_vector(self, collection_name, vector, limit):
+    async def search_by_vector(self, collection_name, vector, limit, department=None):
         return self.rows[:limit]
 
 

@@ -75,6 +75,19 @@ class VectorDBInterface(ABC):
 
     @abstractmethod
     async def search_by_vector(
-        self, collection_name: str, vector: list, limit: int
+        self,
+        collection_name: str,
+        vector: list,
+        limit: int,
+        department: str | None = None,
     ) -> list[RetrievedDocument]:
-        pass
+        """Nearest rows, optionally restricted to one department.
+
+        `department` is part of the INTERFACE rather than a pgvector detail, because
+        filtering after the search is a correctness problem: the caller cannot get
+        back rows the search never returned. Every provider must apply it in the
+        query, and a provider that cannot must say so rather than ignore it — that is
+        the mistake that made `dot` mean two different metrics.
+
+        Rows with no department are included: shared content belongs to everyone.
+        """
