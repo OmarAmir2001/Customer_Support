@@ -10,7 +10,48 @@
 
 > An AI agent that answers student questions from the CS and IS department handbooks, escalates the ones it cannot answer confidently to a human advisor, and learns from resolved escalations — through a human-gated promotion step, not automatically.
 
-**Status:** 🟢 The whole loop runs end to end — retrieval, three orthogonal judge gates, escalation to a human, resolution delivered back into the same conversation, and human-gated promotion into the knowledge base. Dockerised, instrumented with Prometheus, Grafana and Langfuse, evaluated offline with RAGAS, 250 tests in CI.
+**Status:** 🟢 The whole loop runs end to end — retrieval, three orthogonal judge gates, escalation to a human, resolution delivered back into the same conversation, and human-gated promotion into the knowledge base. Dockerised, instrumented with Prometheus, Grafana and Langfuse, evaluated offline with RAGAS, 336 tests in CI.
+
+---
+
+## Quick start
+
+Five commands from a fresh clone to a cited answer. Nothing here needs the DVC remote.
+
+```bash
+git clone https://github.com/OmarAmir2001/Customer_Support.git && cd Customer_Support
+cp .env.example .env            # then fill in GROQ_API_KEY and COHERE_API_KEY
+make up                         # Postgres, migrations, API, nginx, monitoring
+make demo-kb                    # load the committed SAMPLE handbooks
+curl -s localhost:8000/ask -H 'Content-Type: application/json' \
+  -d '{"question":"كم عدد الساعات المعتمدة المطلوبة للتخرج؟","student_id":"demo","department":"CS"}' | jq
+```
+
+You should get `135` credit hours, citing `CS_SAMPLE — مادة (٢٤)`, with
+`"escalated": false`. Ask the same question with `"department":"IS"` and you get
+`141` from the IS handbook — the two samples disagree on purpose, so the department
+filter is visibly doing something rather than being asserted.
+
+**Two keys are the only manual step.** `GROQ_API_KEY` (generation — the free tier is
+enough) and `COHERE_API_KEY` (embeddings and the judges). Everything else in
+`.env.example` has a working default, which CI proves by booting the stack from
+`cp .env.example .env` and nothing else.
+
+**What `make demo-kb` loads.** `data/handbooks_sample/` holds two small **synthetic**
+handbooks, committed to the repo. They are not any real institute's regulations —
+they exist so this quick start works on a clone with no access to the DVC remote. The
+real handbooks are DVC-tracked and not published here; with the remote configured,
+`dvc repro` builds the real corpus instead and everything downstream is identical.
+
+Without `make demo-kb` the vector collection is empty, and an empty collection makes
+**every** question escalate — gate 1 correctly refuses to answer from nothing. If
+every question comes back escalated, that is the first thing to check:
+`curl -s localhost:8000/health | jq` reports `documents_indexed`.
+
+Then: `make ui` for the operator console on <http://127.0.0.1:7860>, or
+`make monitoring` for the dashboards. The rest of this README is design writing —
+why the gates are orthogonal, why escalation ends the run, what is measured. None of
+it is needed to run the thing.
 
 ---
 

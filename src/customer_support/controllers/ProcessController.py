@@ -20,15 +20,25 @@ from .ProjectController import ProjectController
 # to be, since that path is the key the Section 1 re-sync deletes on.
 HEADERS_TO_SPLIT_ON = [("#", "h1"), ("##", "h2"), ("###", "h3")]
 
-# Handbook name -> department. Both halves of this mapping are load-bearing at
-# retrieval time: RetrievalController ranks by `source` (handbook chunks outrank
-# instructor-resolved ones) and filters by `department` (a CS student is never
-# answered out of the IS handbook). Neither works unless ingestion writes them, so
-# every chunk gets tagged here, at the one place chunks are created.
+#: Fallback source -> department map, used only when no Settings are available.
+#:
+#: The real authority is `Settings.HANDBOOK_SOURCES`. This exists because
+#: `scripts/build_corpus.py` imports the name for its validation messages and runs
+#: before any app is constructed; a controller always prefers the settings value.
 HANDBOOK_DEPARTMENTS = {
     "CS_2023": "CS",
     "IS_2023": "IS",
+    "CS_SAMPLE": "CS",
+    "IS_SAMPLE": "IS",
 }
+
+#: Stamped on every chunk that came from a handbook.
+#:
+#: Retrieval used to infer this with `source.startswith(("CS_2023", "IS_2023"))`,
+#: which means a CS_2025 handbook would rank below a promoted ticket answer —
+#: silently inverting the system's core precedence rule. A chunk should carry what it
+#: IS rather than have its nature re-derived from its name by every reader.
+HANDBOOK_AUTHORITY = "handbook"
 
 
 class ProcessController(BaseController):
@@ -55,7 +65,10 @@ class ProcessController(BaseController):
         BELOW instructor-resolved ones in the ranking. So the handbook name is
         recovered here and written as a clean `source`.
         """
-        for handbook, department in HANDBOOK_DEPARTMENTS.items():
+        # Settings first; the module constant is only a fallback for callers with no
+        # app context (see HANDBOOK_DEPARTMENTS).
+        known = getattr(self.app_settings, "HANDBOOK_SOURCES", None) or HANDBOOK_DEPARTMENTS
+        for handbook, department in known.items():
             if handbook.lower() in (file_id or "").lower():
                 return handbook, department
         return None, None
@@ -68,6 +81,9 @@ class ProcessController(BaseController):
         if source is not None:
             metadata["source"] = source
             metadata["department"] = department
+            # Explicit, so retrieval ranks on what the chunk IS rather than on a
+            # prefix match against a hardcoded list of names.
+            metadata["authority"] = HANDBOOK_AUTHORITY
         else:
             # Not a recognised handbook: keep whatever source the loader gave, and
             # leave department unset so the chunk is treated as shared content.

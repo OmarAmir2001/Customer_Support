@@ -16,7 +16,21 @@ from customer_support.utils.metrics import record_query_drift
 
 from .BaseController import BaseController
 
-HANDBOOK_SOURCES = ("CS_2023", "IS_2023")
+#: Legacy prefix list, kept ONLY to rank rows indexed before chunks carried an
+#: `authority` field. New ingestion stamps `authority: "handbook"` instead.
+#:
+#: This tuple was the bug: precedence matched `source.startswith(...)` against it, so
+#: a CS_2025 handbook would fall through to rank 2 — BELOW instructor_resolved —
+#: silently inverting the rule that the handbook always outranks a promoted ticket
+#: answer. Nothing would error; the learning loop would just quietly start overruling
+#: the regulations.
+#:
+#: Removing it outright is not safe yet: an existing collection holds handbook rows
+#: with no `authority` key, and ranking purely on that field would demote every one
+#: of them on the next request — causing the exact bug this change prevents. The
+#: fallback goes away after a full re-index.
+LEGACY_HANDBOOK_PREFIXES = ("CS_2023", "IS_2023", "CS_SAMPLE", "IS_SAMPLE")
+HANDBOOK_AUTHORITY = "handbook"
 INSTRUCTOR_RESOLVED_SOURCE = "instructor_resolved"
 
 
@@ -147,11 +161,23 @@ class RetrievalController(BaseController):
         its similarity order. Stable sort, so scores still decide within a group."""
 
         def rank(doc: RetrievedDocument) -> int:
-            source = (doc.metadata or {}).get("source", "")
-            if any(source.startswith(h) for h in HANDBOOK_SOURCES):
+            meta = doc.metadata or {}
+
+            # Preferred: the chunk says what it is. Set at ingest, so a handbook
+            # published under any future name ranks correctly without a code change.
+            if meta.get("authority") == HANDBOOK_AUTHORITY:
                 return 0
+
+            source = meta.get("source") or ""
             if source == INSTRUCTOR_RESOLVED_SOURCE:
                 return 1
+
+            # Fallback for rows indexed before `authority` existed. See the note on
+            # LEGACY_HANDBOOK_PREFIXES — without this, every already-indexed handbook
+            # chunk would demote below promoted ticket answers on the next request.
+            if any(source.startswith(prefix) for prefix in LEGACY_HANDBOOK_PREFIXES):
+                return 0
+
             return 2
 
         return sorted(documents, key=rank)

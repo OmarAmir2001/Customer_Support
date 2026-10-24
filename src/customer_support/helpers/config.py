@@ -163,6 +163,26 @@ class Settings(BaseSettings):
     PRIMARY_LANG: str = "en"
     DEFAULT_LANG: str = "en"
 
+    # Handbook source name -> department, and the ONE authority for both halves.
+    #
+    # This was a module constant in ProcessController while RetrievalController kept a
+    # SEPARATE hardcoded tuple of the same names. Two lists deciding one fact, which
+    # is the recurring failure in this codebase: publish a CS_2025 handbook and
+    # ingestion rejects it as unknown, while retrieval — if it got in — would rank it
+    # BELOW instructor_resolved, silently inverting the rule that the handbook always
+    # outranks a promoted ticket answer.
+    #
+    # Configuration, so adding next year's handbook is an .env change rather than a
+    # code change in two files. JSON object in .env, like FILE_ALLOWED_TYPES.
+    HANDBOOK_SOURCES: dict[str, str] = {
+        "CS_2023": "CS",
+        "IS_2023": "IS",
+        # The committed synthetic samples, so a fresh clone can run the whole loop
+        # without the DVC remote. See data/handbooks_sample/.
+        "CS_SAMPLE": "CS",
+        "IS_SAMPLE": "IS",
+    }
+
     # --- retrieval ---
     KB_COLLECTION_NAME: str = "collection_1"
     RETRIEVAL_TOP_K: int = 5

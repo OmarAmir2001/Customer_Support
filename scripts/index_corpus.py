@@ -80,6 +80,10 @@ def load_corpus(path: Path) -> list[_Chunk]:
                 "source": record["source"],
                 "section": record["section"],
                 "department": record.get("department"),
+                # What retrieval ranks on. Absent from an older corpus.json, in which
+                # case RetrievalController falls back to the legacy source-prefix
+                # check — see LEGACY_HANDBOOK_PREFIXES.
+                "authority": record.get("authority"),
                 "citation": record.get("citation"),
                 "chunk_id": record.get("chunk_id"),
             },

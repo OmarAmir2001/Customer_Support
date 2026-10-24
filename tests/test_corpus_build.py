@@ -76,9 +76,17 @@ def record(**overrides):
     return base
 
 
+#: The sources a two-handbook fixture is expected to contain.
+#:
+#: Passed explicitly now: `validate()` no longer checks completeness against the
+#: global source map, because that map covers both the real handbooks and the
+#: committed samples and no single run reads both. Completeness needs outside
+#: knowledge of what was supposed to be there, so the caller states it.
+EXPECTED_BOTH = {"CS_2023", "IS_2023"}
+
+
 def both_handbooks(*records):
-    """validate() requires every known handbook to contribute, so tests that are not
-    about that rule need a chunk from each."""
+    """Tests that are not about the completeness rule still need a chunk from each."""
     return [*records, record(chunk_id="IS_2023::X::0", source="IS_2023", department="IS")]
 
 
@@ -141,7 +149,7 @@ def test_an_empty_input_directory_is_an_error_not_an_empty_corpus(tmp_path, sett
 
 
 def test_a_valid_corpus_has_no_problems():
-    assert validate(both_handbooks(record())) == []
+    assert validate(both_handbooks(record()), expected_sources=EXPECTED_BOTH) == []
 
 
 def test_empty_text_is_rejected():
@@ -183,9 +191,26 @@ def test_a_duplicate_chunk_id_is_rejected():
 
 
 def test_a_handbook_contributing_nothing_is_rejected():
-    """A file that parsed to zero chunks is invisible in a total record count."""
-    problems = validate([record()])  # CS only
+    """A file that parsed to zero chunks is invisible in a total record count.
+
+    The caller now states what it expected to find, so this test says "both
+    handbooks were read" and supplies records for only one.
+    """
+    problems = validate([record()], expected_sources=EXPECTED_BOTH)  # CS only
     assert any("IS_2023: contributed no chunks" in p for p in problems)
+
+
+def test_completeness_is_not_checked_when_the_caller_states_no_expectation():
+    """`None` skips the check rather than guessing at a global list.
+
+    Every other rule in validate() is a per-record invariant the records can answer
+    for themselves. Completeness cannot be: a source that contributed nothing is, by
+    definition, absent from the records. So it needs outside knowledge, and inventing
+    that from a module-level map is what broke the moment the map spanned both the
+    real handbooks and the committed samples.
+    """
+    assert validate([record()]) == []
+    assert validate([record()], expected_sources=set()) == []
 
 
 def test_an_empty_corpus_is_rejected():
@@ -220,4 +245,6 @@ def test_the_committed_corpus_is_valid():
     records = json.loads(
         (REPO_ROOT / "data" / "corpus" / "corpus.json").read_text(encoding="utf-8")
     )
-    assert validate(records) == []
+    # The committed corpus is built from the REAL handbooks, so those are what it
+    # must contain — asserted explicitly rather than inherited from a global map.
+    assert validate(records, expected_sources=EXPECTED_BOTH) == []
